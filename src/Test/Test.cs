@@ -74,15 +74,15 @@ namespace FlyByWireless.SignalRTunnel.Test
             _ = client.On(nameof(ITestClient.ClientMethod1), (string a) => tcs!.SetResult(a));
             var handler = app.Services.GetRequiredService<HubConnectionHandler<TestHub>>();
             var start = client.StartAsync();
-            var connection = handler.OnConnectedAsync(serverStream, out string connectionId);
-            Assert.NotNull(connectionId);
+            var connection = handler.OnConnectedAsync(serverStream, out var connectionContext);
+            Assert.NotNull(connectionContext?.ConnectionId);
             await start;
             Assert.Equal(HubConnectionState.Connected, client.State);
-            var context = app.Services.GetRequiredService<IHubContext<TestHub, ITestClient>>();
+            var hubContext = app.Services.GetRequiredService<IHubContext<TestHub, ITestClient>>();
             {
                 var expected = Guid.NewGuid().ToString();
                 tcs = new();
-                await context.Clients.All.ClientMethod1(expected);
+                await hubContext.Clients.All.ClientMethod1(expected);
                 Assert.Equal(expected, await tcs.Task);
             }
             {

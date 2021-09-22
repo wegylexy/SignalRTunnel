@@ -21,13 +21,13 @@ class MyService : IHostedService
 		{
 			var stream = await AcceptStreamAsync(cancellationToken);
 			Interlocked.Increment(ref TunnelCount);
-			_ = handler.OnConnectedAsync(stream)
+			var connection = handler.OnConnectedAsync(stream, out var context)
 				.ContinueWith(_ => Interlocked.Decrement(ref TunnelCount));
 		}
 	}
 
 	public Task StopAsync(CancellationToken cancellationToken)
-	=> Task.CompletedTask;
+	=> Task.CompletedTask; // TODO: abort all contexts and wait for all connections to complete
 
 	Task<Stream> AcceptStreamAsync() => throw new NotImplementedException();
 }

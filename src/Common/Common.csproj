@@ -8,8 +8,11 @@
 		<PackageId>FlyByWireless.SignalRTunnel</PackageId>
 		<AssemblyName>SignalRTunnel</AssemblyName>
 		<Product>SignalR Tunnel</Product>
+		<Title>$(Product)</Title>
+		<Description>Transport injection for ASP.NET Core SignalR</Description>
+		<PackageTags>aspnetcore signalr transport injection extensions</PackageTags>
 		<Copyright>(C) 2021 WONG Tin Chi Timothy. All rights reserved.</Copyright>
-		<VersionPrefix>1.0.0</VersionPrefix>
+		<VersionPrefix>1.1.0</VersionPrefix>
 		<IsPackable Condition="'$(Configuration)'=='Release'">true</IsPackable>
 		<RepositoryType>git</RepositoryType>
 		<RepositoryUrl>https://github.com/wegylexy/SignalRTunnel</RepositoryUrl>
