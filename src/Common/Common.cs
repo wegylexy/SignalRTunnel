@@ -1,9 +1,11 @@
 ﻿using Microsoft.AspNetCore.Connections;
+using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Http.Features;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipelines;
+using System.Security.Claims;
 using System.Threading.Tasks;
 
 namespace FlyByWireless.SignalRTunnel
@@ -24,14 +26,19 @@ namespace FlyByWireless.SignalRTunnel
         { }
     }
 
-    public class DuplexContext : ConnectionContext
+    public class DuplexContext : ConnectionContext, IConnectionUserFeature
     {
         public override IDuplexPipe Transport { get; set; }
         public override string ConnectionId { get; set; } = null!;
         public override IFeatureCollection Features { get; } = new FeatureCollection();
         public override IDictionary<object, object?> Items { get; set; } = new Dictionary<object, object?>();
+        public ClaimsPrincipal? User { get; set; }
 
-        public DuplexContext(IDuplexPipe transport) => Transport = transport;
+        public DuplexContext(IDuplexPipe transport)
+        {
+            Transport = transport;
+            Features.Set<IConnectionUserFeature>(this);
+        }
 
         public DuplexContext(Stream transport) : this(new DuplexPipe(transport)) { }
 

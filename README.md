@@ -20,16 +20,24 @@ class MyService : IHostedService
 		while (!cancellationToken.IsCancellationRequested)
 		{
 			var stream = await AcceptStreamAsync(cancellationToken);
-			Interlocked.Increment(ref TunnelCount);
-			var connection = handler.OnConnectedAsync(stream, out var context)
-				.ContinueWith(_ => Interlocked.Decrement(ref TunnelCount));
+			var auth = await HandshakeAsync(stream);
+			if (auth.Succeeded)
+			{
+				Interlocked.Increment(ref TunnelCount);
+				_ = handler.OnConnectedAsync(stream, user: auth.Principal)
+					.ContinueWith(_ => Interlocked.Decrement(ref TunnelCount));
+			}
 		}
 	}
 
 	public Task StopAsync(CancellationToken cancellationToken)
 	=> Task.CompletedTask; // TODO: abort all contexts and wait for all connections to complete
 
-	Task<Stream> AcceptStreamAsync() => throw new NotImplementedException();
+	Task<Stream> AcceptStreamAsync()
+	=> throw new NotImplementedException();
+
+	Task<AuthenticateResult> HandshakeAsync(Stream stream)
+	=> AuthenticateResult.Fail(new NotImplementedException());
 }
 ```
 

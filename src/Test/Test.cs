@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -7,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Diagnostics;
 using System.IO.Pipes;
+using System.Security.Claims;
 using System.Threading.Tasks;
 using Xunit;
 using PipeOptions = System.IO.Pipes.PipeOptions;
@@ -37,6 +39,14 @@ namespace FlyByWireless.SignalRTunnel.Test
             Clients.Caller.ClientMethod1(a);
             return Task.CompletedTask;
         }
+
+#pragma warning disable CA1822 // Mark members as static
+        [Authorize(Roles = "A")]
+        public Task AOnly() => Task.CompletedTask;
+
+        [Authorize(Roles = "B,C")]
+        public Task BOrCOnly() => Task.CompletedTask;
+#pragma warning restore CA1822 // Mark members as static
 
         public Task Abort()
         {
@@ -74,7 +84,11 @@ namespace FlyByWireless.SignalRTunnel.Test
             _ = client.On(nameof(ITestClient.ClientMethod1), (string a) => tcs!.SetResult(a));
             var handler = app.Services.GetRequiredService<HubConnectionHandler<TestHub>>();
             var start = client.StartAsync();
-            var connection = handler.OnConnectedAsync(serverStream, out var connectionContext);
+            DuplexContext? connectionContext = null;
+            var connection = handler.OnConnectedAsync(serverStream, user: new(new ClaimsIdentity(new Claim[]
+            {
+                new(ClaimTypes.Role, "C")
+            }, "Mock")), configure: c => connectionContext = c);
             Assert.NotNull(connectionContext?.ConnectionId);
             await start;
             Assert.Equal(HubConnectionState.Connected, client.State);
@@ -91,6 +105,8 @@ namespace FlyByWireless.SignalRTunnel.Test
                 await client.InvokeAsync(nameof(TestHub.HubMethod1), expected);
                 Assert.Equal(expected, await tcs.Task);
             }
+            await Assert.ThrowsAsync<HubException>(() => client.InvokeAsync(nameof(TestHub.AOnly)));
+            await client.InvokeAsync(nameof(TestHub.BOrCOnly));
             await Assert.ThrowsAsync<TaskCanceledException>(() => client.InvokeAsync(nameof(TestHub.Abort)));
             await connection;
             await app.StopAsync();
