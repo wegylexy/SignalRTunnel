@@ -5,16 +5,16 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Nerdbank.Streams;
 using System;
 using System.Diagnostics;
-using System.IO.Pipes;
 using System.Security.Claims;
 using System.Threading.Tasks;
 using Xunit;
-using PipeOptions = System.IO.Pipes.PipeOptions;
 
 namespace FlyByWireless.SignalRTunnel.Test
 {
+#pragma warning disable VSTHRD200 // Use "Async" suffix for async methods
     public interface ITestClient
     {
         Task ClientMethod1(string a);
@@ -34,11 +34,7 @@ namespace FlyByWireless.SignalRTunnel.Test
             return Task.CompletedTask;
         }
 
-        public Task HubMethod1(string a)
-        {
-            Clients.Caller.ClientMethod1(a);
-            return Task.CompletedTask;
-        }
+        public Task HubMethod1(string a) => Clients.Caller.ClientMethod1(a);
 
 #pragma warning disable CA1822 // Mark members as static
         [Authorize(Roles = "A")]
@@ -54,6 +50,7 @@ namespace FlyByWireless.SignalRTunnel.Test
             return Task.CompletedTask;
         }
     }
+#pragma warning restore VSTHRD200 // Use "Async" suffix for async methods
 
     public class Test
     {
@@ -69,46 +66,43 @@ namespace FlyByWireless.SignalRTunnel.Test
             var app = builder.Build();
             await app.StartAsync();
             var pipeName = Guid.NewGuid().ToString("N");
-            // TODO: replace the named pipe with a more efficient buffer for testing
-            using NamedPipeClientStream clientStream = new(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
-            using NamedPipeServerStream serverStream = new(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-            await Task.WhenAll(
-                clientStream.ConnectAsync(),
-                serverStream.WaitForConnectionAsync()
-            );
-            Assert.True(clientStream.IsConnected && serverStream.IsConnected);
-            var client = new HubConnectionBuilder()
-                .WithTunnel(clientStream)
-                .Build();
-            TaskCompletionSource<string>? tcs = null;
-            _ = client.On(nameof(ITestClient.ClientMethod1), (string a) => tcs!.SetResult(a));
-            var handler = app.Services.GetRequiredService<HubConnectionHandler<TestHub>>();
-            var start = client.StartAsync();
-            DuplexContext? connectionContext = null;
-            var connection = handler.OnConnectedAsync(serverStream, user: new(new ClaimsIdentity(new Claim[]
+            var (clientStream, serverStream) = FullDuplexStream.CreatePair();
+            using (clientStream)
+            using (serverStream)
             {
+                var client = new HubConnectionBuilder()
+                    .WithTunnel(clientStream)
+                    .Build();
+                TaskCompletionSource<string>? tcs = null;
+                _ = client.On(nameof(ITestClient.ClientMethod1), (string a) => tcs!.SetResult(a));
+                var handler = app.Services.GetRequiredService<HubConnectionHandler<TestHub>>();
+                var start = client.StartAsync();
+                DuplexContext? connectionContext = null;
+                var connection = handler.OnConnectedAsync(serverStream, user: new(new ClaimsIdentity(new Claim[]
+                {
                 new(ClaimTypes.Role, "C")
-            }, "Mock")), configure: c => connectionContext = c);
-            Assert.NotNull(connectionContext?.ConnectionId);
-            await start;
-            Assert.Equal(HubConnectionState.Connected, client.State);
-            var hubContext = app.Services.GetRequiredService<IHubContext<TestHub, ITestClient>>();
-            {
-                var expected = Guid.NewGuid().ToString();
-                tcs = new();
-                await hubContext.Clients.All.ClientMethod1(expected);
-                Assert.Equal(expected, await tcs.Task);
+                }, "Mock")), configure: c => connectionContext = c);
+                Assert.NotNull(connectionContext?.ConnectionId);
+                await start;
+                Assert.Equal(HubConnectionState.Connected, client.State);
+                var hubContext = app.Services.GetRequiredService<IHubContext<TestHub, ITestClient>>();
+                {
+                    var expected = Guid.NewGuid().ToString();
+                    tcs = new();
+                    await hubContext.Clients.All.ClientMethod1(expected);
+                    Assert.Equal(expected, await tcs.Task);
+                }
+                {
+                    var expected = Guid.NewGuid().ToString();
+                    tcs = new();
+                    await client.InvokeAsync(nameof(TestHub.HubMethod1), expected);
+                    Assert.Equal(expected, await tcs.Task);
+                }
+                await Assert.ThrowsAsync<HubException>(() => client.InvokeAsync(nameof(TestHub.AOnly)));
+                await client.InvokeAsync(nameof(TestHub.BOrCOnly));
+                await Assert.ThrowsAsync<TaskCanceledException>(() => client.InvokeAsync(nameof(TestHub.Abort)));
+                await connection;
             }
-            {
-                var expected = Guid.NewGuid().ToString();
-                tcs = new();
-                await client.InvokeAsync(nameof(TestHub.HubMethod1), expected);
-                Assert.Equal(expected, await tcs.Task);
-            }
-            await Assert.ThrowsAsync<HubException>(() => client.InvokeAsync(nameof(TestHub.AOnly)));
-            await client.InvokeAsync(nameof(TestHub.BOrCOnly));
-            await Assert.ThrowsAsync<TaskCanceledException>(() => client.InvokeAsync(nameof(TestHub.Abort)));
-            await connection;
             await app.StopAsync();
         }
     }
