@@ -18,6 +18,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Server", "Server\Server.csproj", "{7FE67644-AD7C-433C-9F18-9434C60F42E5}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Native", "Native\Native.csproj", "{7A3A6E30-5727-44E8-B49F-47A22B6C44E2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -40,6 +42,10 @@ Global
 		{7FE67644-AD7C-433C-9F18-9434C60F42E5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7FE67644-AD7C-433C-9F18-9434C60F42E5}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7FE67644-AD7C-433C-9F18-9434C60F42E5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7A3A6E30-5727-44E8-B49F-47A22B6C44E2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7A3A6E30-5727-44E8-B49F-47A22B6C44E2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7A3A6E30-5727-44E8-B49F-47A22B6C44E2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7A3A6E30-5727-44E8-B49F-47A22B6C44E2}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
