@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.SignalR.Client;
 using System;
 using System.IO;
 using System.IO.Pipelines;
+using System.IO.Pipes;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,21 +22,53 @@ namespace FlyByWireless.SignalRTunnel
 
         public TimeSpan? NextRetryDelay(RetryContext retryContext) => null;
     }
+
+    sealed class NamedPipeClient : IConnectionFactory
+    {
+        readonly IServiceProvider _provider;
+        readonly Func<IServiceProvider, CancellationToken, NamedPipeClientStream> _factory;
+
+        public NamedPipeClient(IServiceProvider provider, Func<IServiceProvider, CancellationToken, NamedPipeClientStream> factory)
+        {
+            _provider = provider;
+            _factory = factory;
+        }
+
+        public async ValueTask<ConnectionContext> ConnectAsync(EndPoint endpoint, CancellationToken cancellationToken = default)
+        {
+            var client = _factory(_provider, cancellationToken);
+            if (!client.IsConnected)
+            {
+                await client.ConnectAsync(cancellationToken);
+            }
+            return new DuplexContext(client) { ConnectionId = null! };
+        }
+    }
 }
 
 namespace Microsoft.Extensions.DependencyInjection
 {
     public static class SignalRTunnelClientExtensions
     {
-        public static IHubConnectionBuilder WithTunnel(this IHubConnectionBuilder hubConnectionBuilder, IDuplexPipe transport)
+        static readonly EndPoint _endPoint = new DnsEndPoint(".", 0);
+
+        public static IHubConnectionBuilder WithTunnel(this IHubConnectionBuilder builder, IDuplexPipe transport)
         {
-            hubConnectionBuilder.Services.AddSingleton<EndPoint>(new DnsEndPoint(".", 0));
             Client client = new Client(transport);
-            hubConnectionBuilder.Services.AddSingleton<IConnectionFactory>(client);
-            return hubConnectionBuilder.WithAutomaticReconnect(client);
+            builder.Services.AddSingleton(_endPoint).AddSingleton<IConnectionFactory>(client);
+            return builder.WithAutomaticReconnect(client);
         }
 
         public static IHubConnectionBuilder WithTunnel(this IHubConnectionBuilder hubConnectionBuilder, Stream transport)
         => WithTunnel(hubConnectionBuilder, new DuplexPipe(transport));
+
+        public static IHubConnectionBuilder WithNamedPipe(this IHubConnectionBuilder builder, Func<IServiceProvider, CancellationToken, NamedPipeClientStream> factory)
+        {
+            builder.Services.AddSingleton(_endPoint).AddSingleton(factory).AddSingleton<IConnectionFactory, NamedPipeClient>();
+            return builder;
+        }
+
+        public static IHubConnectionBuilder WithNamedPipe(this IHubConnectionBuilder builder, string pipeName, string serverName = ".")
+        => builder.WithNamedPipe((provider, _) => new NamedPipeClientStream(serverName, pipeName, PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous));
     }
 }

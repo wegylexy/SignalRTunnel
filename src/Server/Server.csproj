@@ -1,15 +1,15 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
 	<PropertyGroup>
 		<TargetFrameworks>netcoreapp3.1;net5.0;net6.0</TargetFrameworks>
 		<OutputType>Library</OutputType>
 		<Nullable>enable</Nullable>
 		<Authors>WONG Tin Chi Timothy</Authors>
-		<PackageId>FlyByWireless.SignalRTunnel.Common</PackageId>
-		<AssemblyName>SignalRTunnel.Common</AssemblyName>
-		<Product>SignalR Tunnel Common</Product>
+		<PackageId>FlyByWireless.SignalRTunnel</PackageId>
+		<AssemblyName>SignalRTunnel</AssemblyName>
+		<Product>SignalR Tunnel</Product>
 		<Title>$(Product)</Title>
-		<Description>Transport injection for ASP.NET Core SignalR common</Description>
+		<Description>Transport injection for ASP.NET Core SignalR</Description>
 		<PackageTags>aspnetcore signalr transport injection extensions</PackageTags>
 		<Copyright>(C) 2021 WONG Tin Chi Timothy. All rights reserved.</Copyright>
 		<VersionPrefix>1.3.0</VersionPrefix>
@@ -31,6 +31,7 @@
 
 	<ItemGroup>
 		<None Include="../../LICENSE" Pack="true" PackagePath="" />
+		<PackageReference Include="FlyByWireless.SignalRTunnel.Common" Version="1.3.*" />
 	</ItemGroup>
 
 </Project>
