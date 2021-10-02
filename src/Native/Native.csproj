@@ -7,7 +7,7 @@
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<Authors>WONG Tin Chi Timothy</Authors>
 		<PackageId>FlyByWireless.SignalRTunnel.Client.Native</PackageId>
-		<AssemblyName>SignalRTunnel.Client.Native</AssemblyName>
+		<AssemblyName>signalr</AssemblyName>
 		<Product>SignalR Tunnel Native Client</Product>
 		<Title>$(Product)</Title>
 		<Description>Transport injection for ASP.NET Core SignalR native client</Description>
@@ -20,6 +20,18 @@
 		<PackageLicenseFile>LICENSE</PackageLicenseFile>
 	</PropertyGroup>
 
+	<PropertyGroup>
+		<RuntimeIdentifiers>win-x64;win-arm64;win-x86;osx-x64;linux-x64</RuntimeIdentifiers>
+		<InvariantGlobalization>true</InvariantGlobalization>
+		<IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
+		<IlcDisableReflection>false</IlcDisableReflection>
+		<IlcOptimizationPreference>Speed</IlcOptimizationPreference>
+		<IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
+		<IlcDisableUnhandledExceptionExperience>true</IlcDisableUnhandledExceptionExperience>
+		<NativeLib>Static</NativeLib>
+		<SelfContained>true</SelfContained>
+	</PropertyGroup>
+		
 	<ItemGroup>
 		<None Include="../../LICENSE" Pack="true" PackagePath="" />
 		<PackageReference Include="FlyByWireless.SignalRTunnel.Client" Version="1.3.*" />

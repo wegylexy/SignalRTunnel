@@ -1,3 +1,4 @@
+using MessagePack;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -7,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Nerdbank.Streams;
 using System;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security.Claims;
 using System.Threading.Tasks;
 using Xunit;
@@ -143,6 +145,66 @@ namespace FlyByWireless.SignalRTunnel.Test
             await extra.StopAsync();
             Assert.True(extra.State == HubConnectionState.Disconnected);
             await app.StopAsync();
+        }
+
+        [Fact]
+        public void FunctionPointer()
+        {
+            TaskCompletionSource tcs = new();
+            var p = new Func<nint>(() =>
+            {
+                GCHandle h = default;
+                Action a = () =>
+                {
+                    tcs.SetResult();
+                    h.Free();
+                };
+                h = GCHandle.Alloc(a);
+                return Marshal.GetFunctionPointerForDelegate(a);
+            })();
+            GC.Collect();
+            unsafe
+            {
+                ((delegate* unmanaged<void>)p)();
+            }
+            Assert.True(tcs.Task.IsCompletedSuccessfully);
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData(true)]
+        [InlineData(false)]
+        [InlineData((byte)3)]
+        [InlineData((byte)254)]
+        [InlineData((short)259)]
+        [InlineData((short)-259)]
+        [InlineData(123456789)]
+        [InlineData(-123456789)]
+        [InlineData(1234567890123)]
+        [InlineData(-1234567890123)]
+        [InlineData(123.45f)]
+        [InlineData(123.45)]
+        [InlineData("Hello, world!")]
+        public void Deserialize<T>(T? value)
+        => Assert.Equal(value, Convert.ChangeType(MessagePackSerializer.Deserialize(typeof(object), MessagePackSerializer.Serialize(typeof(T), value)), typeof(T)));
+
+        [Fact]
+        public void DeserializeDateTime() => Deserialize(DateTime.UtcNow);
+
+        [Fact]
+        public void DeserializeArray()
+        {
+            var e = new object?[]
+            {
+                null,
+                true, false,
+                (byte)3, (byte)254, (short)259, (short)-259, 123456789, -123456789, 1234567890123, -1234567890123, 123.45f, 123.45,
+                "Hello, world!",
+                DateTime.UtcNow
+            };
+            Assert.Equal(e, ((object[])MessagePackSerializer.Deserialize(typeof(object), MessagePackSerializer.Serialize(e)))
+                .Select((o, i) => Convert.ChangeType(o, e[i]?.GetType() ?? typeof(object)))
+            );
         }
     }
 }
