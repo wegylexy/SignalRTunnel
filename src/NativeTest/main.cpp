@@ -8,7 +8,7 @@ using namespace FlyByWireless::SignalRTunnel;
 class Client : public HubConnection
 {
 public:
-	task<void> OnClosed(const std::string& error) override
+	task<void> OnClosed(const char* error) override
 	{
 		return HubConnection::OnClosed(error);
 	}
@@ -18,12 +18,12 @@ public:
 		return HubConnection::OnReconnected();
 	}
 
-	task<void> OnReconnecting(const std::string& error) override
+	task<void> OnReconnecting(const char* error) override
 	{
 		return HubConnection::OnReconnecting(error);
 	}
 
-	Client(const string& pipeName, const string& serverName) : HubConnection{ pipeName, serverName }
+	Client(const char* pipeName, const char* serverName) : HubConnection{ pipeName, serverName }
 	{ }
 };
 
