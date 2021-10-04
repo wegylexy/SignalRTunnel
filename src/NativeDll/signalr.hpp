@@ -27,7 +27,7 @@ namespace FlyByWireless
 
 			SIGNALR_API virtual concurrency::task<void> OnReconnecting(const char* error);
 
-			SIGNALR_API HubConnection(const char* pipeName, const char* serverName);
+			SIGNALR_API HubConnection(const char* pipeName, const char* serverName = ".");
 
 			SIGNALR_API HubConnection(const char* url, const std::function<concurrency::task<const char*>()>& accessTokenProvider);
 

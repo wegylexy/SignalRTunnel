@@ -233,6 +233,7 @@ namespace FlyByWireless.SignalRTunnel.Test
                 services.AddSignalR().AddMessagePackProtocol().AddNamedPipe<TestHub>(pipeName, 1)
             ).Build();
             await app.StartAsync();
+            var context = app.Services.GetRequiredService<IHubContext<TestHub, ITestClient>>();
             using Process client = new()
             {
                 StartInfo = new(path, pipeName)
@@ -247,10 +248,16 @@ namespace FlyByWireless.SignalRTunnel.Test
             var errorTask = client.StandardError.ReadToEndAsync();
             try
             {
+                using CancellationTokenSource cts = new(5000);
+                client.Exited += (_, _) => cts.Cancel();
+                {
+                    // TODO: make client invoke first instead
+                    await Task.Delay(1000);
+                    await context.Clients.All.ClientMethod1(Guid.NewGuid().ToString());
+                }
                 // TODO: raise client event
                 // TODO: assert server method
-                using CancellationTokenSource exitCts = new(1000);
-                await client.WaitForExitAsync(exitCts.Token);
+                await client.WaitForExitAsync(cts.Token);
             }
             finally
             {
