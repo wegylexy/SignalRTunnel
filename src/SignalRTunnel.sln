@@ -8,6 +8,9 @@ EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Common", "Common\Common.csproj", "{2D5226D2-0F9F-4E5B-B836-3E4B628FD3B7}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Test", "Test\Test.csproj", "{88ACD51F-62D5-4471-8DC4-7D0245775FED}"
+	ProjectSection(ProjectDependencies) = postProject
+		{1EB84363-538C-4B14-A5C4-198CCB1C72BC} = {1EB84363-538C-4B14-A5C4-198CCB1C72BC}
+	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{57776052-FC06-4152-90FE-D1BB42160F47}"
 	ProjectSection(SolutionItems) = preProject

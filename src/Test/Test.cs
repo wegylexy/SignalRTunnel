@@ -7,9 +7,14 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Nerdbank.Streams;
 using System;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Claims;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -205,6 +210,59 @@ namespace FlyByWireless.SignalRTunnel.Test
             Assert.Equal(e, ((object[])MessagePackSerializer.Deserialize(typeof(object), MessagePackSerializer.Serialize(e)))
                 .Select((o, i) => Convert.ChangeType(o, e[i]?.GetType() ?? typeof(object)))
             );
+        }
+    }
+
+    public class NativeTest
+    {
+
+        [Fact]
+        public async Task NativeAsync()
+        {
+            var path = Path.Join(Environment.CurrentDirectory
+                .Replace("net6.0", new Regex(@"\d+(?=-)").Replace(RuntimeInformation.RuntimeIdentifier, string.Empty))
+                .Replace("Test", "NativeTest")
+            , "NativeTest");
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                path += ".exe";
+            }
+            Assert.True(File.Exists(path), $"{path} does not exist.");
+            var pipeName = Guid.NewGuid().ToString("N");
+            using var app = Host.CreateDefaultBuilder().ConfigureServices(services =>
+                services.AddSignalR().AddMessagePackProtocol().AddNamedPipe<TestHub>(pipeName, 1)
+            ).Build();
+            await app.StartAsync();
+            using Process client = new()
+            {
+                StartInfo = new(path, pipeName)
+                {
+                    UseShellExecute = false,
+                    RedirectStandardError = true,
+                    StandardErrorEncoding = Encoding.UTF8
+                },
+                EnableRaisingEvents = true
+            };
+            Assert.True(client.Start());
+            var errorTask = client.StandardError.ReadToEndAsync();
+            try
+            {
+                // TODO: raise client event
+                // TODO: assert server method
+                using CancellationTokenSource exitCts = new(1000);
+                await client.WaitForExitAsync(exitCts.Token);
+            }
+            finally
+            {
+                if (!client.HasExited)
+                {
+                    client.Kill(true);
+                    await client.WaitForExitAsync();
+                }
+                var error = await errorTask;
+                Assert.True(client.ExitCode == default && string.IsNullOrEmpty(error), error.TrimEnd('\n', '\r'));
+            }
+            await app.StopAsync();
         }
     }
 }

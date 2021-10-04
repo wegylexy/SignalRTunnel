@@ -31,47 +31,30 @@ int main(int argc, const char** argv)
 {
 	try
 	{
-		printf("Creating for %s at %s\n", argv[1], ".");
 		Client hub{ argv[1], "." };
 		// TODO: on
-		puts("Starting");
 		hub.Start().then(
 			[&hub]()
 			{
-				puts("Started");
 				// TODO: invoke / send
 			}
 		).then(
 			[&hub]()
 			{
-				puts("Stopping");
 				return hub.Stop();
 			}
 		).then(
-			[&hub](const task<void>& task)
+			[&hub]()
 			{
-				try
-				{
-					task.get();
-					puts("Stopped");
-				}
-				catch (const exception& ex)
-				{
-					fprintf(stderr, "%s\n", ex.what());
-				}
-				catch (...)
-				{
-					fputs("Crashed\n", stderr);
-				}
 				return hub.Dispose();
 			}
 		).get(
 		);
-			puts("Disposed");
 	}
 	catch (const exception& e)
 	{
 		fprintf(stderr, "%s\n", e.what());
+		return 1;
 	}
 	return 0;
 }
