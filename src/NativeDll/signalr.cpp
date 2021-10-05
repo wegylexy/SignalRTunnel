@@ -169,7 +169,7 @@ function<void()> HubConnection::On(const char* methodName, const int32_t argc, c
 			[](void* context, const char* buffer, const int bufferSize, void(*callback)())
 			{
 				const auto m = msgpack::unpack(buffer, bufferSize);
-				(*static_cast<OnHandler*>(context))(m.get().via.array).then(
+				(*static_cast<OnHandler*>(context))(m.get()).then(
 					[callback](const task<void>& task)
 					{
 						try
@@ -230,7 +230,7 @@ task<void> HubConnection::Stop(const cancellation_token& cancellationToken)
 	}
 }
 
-task<msgpack::object> HubConnection::InvokeCore(const char* methodName, const msgpack::object_array& args, const cancellation_token& cancellationToken)
+task<msgpack::object> HubConnection::InvokeCore(const char* methodName, const msgpack::object& args, const cancellation_token& cancellationToken)
 {
 	const auto handle = ((HubConnectionState*)state_)->handle_;
 	if (handle)
@@ -243,7 +243,7 @@ task<msgpack::object> HubConnection::InvokeCore(const char* methodName, const ms
 	}
 }
 
-task<void> HubConnection::SendCore(const char* methodName, const msgpack::object_array& args, const cancellation_token& cancellationToken)
+task<void> HubConnection::SendCore(const char* methodName, const msgpack::object& args, const cancellation_token& cancellationToken)
 {
 	const auto handle = ((HubConnectionState*)state_)->handle_;
 	if (handle)

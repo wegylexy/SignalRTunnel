@@ -1,5 +1,5 @@
 #pragma once
-#include <msgpack/object.hpp>
+#include <msgpack.hpp>
 #if __has_include(<ppltasks.h>)
 #include <ppltasks.h>
 #else
@@ -19,7 +19,7 @@ namespace FlyByWireless
 		class HubConnection
 		{
 		public:
-			typedef std::function<concurrency::task<void>(const msgpack::object_array& object)> OnHandler;
+			typedef std::function<concurrency::task<void>(const msgpack::object& args)> OnHandler;
 
 			SIGNALR_API virtual concurrency::task<void> OnClosed(const char* error);
 
@@ -39,13 +39,60 @@ namespace FlyByWireless
 
 			SIGNALR_API std::function<void()> On(const char* methodName, int32_t argc, const OnHandler& handler);
 
+			inline std::function<void()> On(const char* methodName, const std::function<void()>& handler)
+			{
+				return On(methodName, 0,
+					[handler](const msgpack::object& o)
+					{
+						handler();
+						return concurrency::task_from_result();
+					}
+				);
+			}
+
+			inline std::function<void()> On(const char* methodName, const std::function<concurrency::task<void>()>& handler)
+			{
+				return On(methodName, 0,
+					[handler](const msgpack::object& o)
+					{
+						return handler();
+					}
+				);
+			}
+
+			template<typename TArgs>
+			std::function<void()> On(const char* methodName, const std::function<void(const TArgs&)>& handler)
+			{
+				return On(methodName, 1,
+					[handler](const msgpack::object& o)
+					{
+						TArgs args{};
+						args.msgpack_unpack(o);
+						handler(args);
+					}
+				);
+			}
+
+			template<typename TArgs>
+			std::function<void()> On(const char* methodName, const std::function<concurrency::task<void>(const TArgs&)>& handler)
+			{
+				return On(methodName, 1,
+					[handler](const msgpack::object& o)
+					{
+						TArgs args{};
+						args.msgpack_unpack(o);
+						return handler(args);
+					}
+				);
+			}
+
 			SIGNALR_API concurrency::task<void> Start(const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none());
 
 			SIGNALR_API concurrency::task<void> Stop(const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none());
 
-			SIGNALR_API concurrency::task<msgpack::object> InvokeCore(const char* methodName, const msgpack::object_array& args, const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none());
+			SIGNALR_API concurrency::task<msgpack::object> InvokeCore(const char* methodName, const msgpack::object& args, const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none());
 
-			SIGNALR_API concurrency::task<void> SendCore(const char* methodName, const msgpack::object_array& args, const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none());
+			SIGNALR_API concurrency::task<void> SendCore(const char* methodName, const msgpack::object& args, const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none());
 
 		private:
 			const void* state_;
