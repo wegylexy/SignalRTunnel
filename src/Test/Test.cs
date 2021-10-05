@@ -249,15 +249,23 @@ namespace FlyByWireless.SignalRTunnel.Test
             try
             {
                 using CancellationTokenSource cts = new(5000);
-                client.Exited += (_, _) => cts.Cancel();
+                EventHandler h = (_, _) => cts.Cancel();
+                try
                 {
-                    // TODO: make client invoke first instead
-                    await Task.Delay(1000);
-                    await context.Clients.All.ClientMethod1(Guid.NewGuid().ToString());
+                    client.Exited += h;
+                    {
+                        // TODO: make client invoke first instead
+                        await Task.Delay(1000);
+                        await context.Clients.All.ClientMethod1(Guid.NewGuid().ToString());
+                    }
+                    // TODO: raise client event
+                    // TODO: assert server method
+                    await client.WaitForExitAsync(cts.Token);
                 }
-                // TODO: raise client event
-                // TODO: assert server method
-                await client.WaitForExitAsync(cts.Token);
+                finally
+                {
+                    client.Exited -= h;
+                }
             }
             finally
             {

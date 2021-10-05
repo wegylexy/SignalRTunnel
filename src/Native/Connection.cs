@@ -1,14 +1,15 @@
-﻿using MessagePack;
-using Microsoft.AspNetCore.Http.Connections;
+﻿using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.AspNetCore.SignalR.Protocol;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace FlyByWireless.SignalRTunnel;
 
-sealed class Native : IAsyncDisposable
+sealed class Connection : IAsyncDisposable
 {
     internal unsafe readonly struct EventHandlers
     {
@@ -17,7 +18,7 @@ sealed class Native : IAsyncDisposable
         public readonly delegate* unmanaged<nint, nint, nint, void> Reconnecting = default;
     }
 
-    static Native FromHandle(nint handle) => (Native)GCHandle.FromIntPtr(handle).Target!;
+    static Connection FromHandle(nint handle) => (Connection)GCHandle.FromIntPtr(handle).Target!;
 
     static nint CancelFunctionPointer(CancellationTokenSource source)
     {
@@ -56,7 +57,7 @@ sealed class Native : IAsyncDisposable
     {
         try
         {
-            return (IntPtr)new Native(Marshal.PtrToStringAnsi(pipeName)!, Marshal.PtrToStringAnsi(serverName)!, handlers, context)._handle;
+            return (IntPtr)new Connection(Marshal.PtrToStringAnsi(pipeName)!, Marshal.PtrToStringAnsi(serverName)!, handlers, context)._handle;
         }
         catch
         {
@@ -69,7 +70,7 @@ sealed class Native : IAsyncDisposable
     {
         try
         {
-            return (IntPtr)new Native(Marshal.PtrToStringAnsi(url)!, accessTokenProvider, handlers, context)._handle;
+            return (IntPtr)new Connection(Marshal.PtrToStringAnsi(url)!, accessTokenProvider, handlers, context)._handle;
         }
         catch
         {
@@ -95,12 +96,10 @@ sealed class Native : IAsyncDisposable
     {
         var m = Marshal.PtrToStringUTF8(methodName)!;
         var n = FromHandle(handle);
-        var types = new Type[argc];
-        Array.Fill(types, typeof(object));
-        var d = n._connection.On(m, types, (args, _) =>
+        var d = n._connection.On(m, Array.Empty<Type>(), (args, _) =>
         {
             TaskCompletionSource tcs = new();
-            var b = MessagePackSerializer.Serialize(args);
+            var b = (byte[])args[0]!;
             fixed (byte* p = b)
             {
                 handler(context, p, b.Length, CompleteFunctionPointer(tcs));
@@ -136,18 +135,19 @@ sealed class Native : IAsyncDisposable
         return p;
     }
 
-    // TODO: on, invoke, send
+    // TODO: invoke, send
 
     bool _disposing;
-    readonly GCHandle _handle;
     readonly HubConnection _connection;
+    readonly GCHandle _handle;
     readonly EventHandlers _handlers;
     readonly ConcurrentDictionary<string, HashSet<Action>> _ons = new();
 
-    unsafe Native(IHubConnectionBuilder builder, in EventHandlers handlers, nint context)
+    unsafe Connection(IHubConnectionBuilder builder, in EventHandlers handlers, nint context)
     {
-        _handle = GCHandle.Alloc(this);
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IHubProtocol, NativeMessagePackHubProtocol>());
         _connection = builder.Build();
+        _handle = GCHandle.Alloc(this);
         _handlers = handlers;
         static Task E(Exception? ex, delegate* unmanaged<nint, nint, nint, void> callback, nint context)
         {
@@ -189,14 +189,12 @@ sealed class Native : IAsyncDisposable
         }
     }
 
-    unsafe Native(string pipeName, string serverName, in EventHandlers handlers, nint context) : this(new HubConnectionBuilder()
-        .AddMessagePackProtocol()
+    unsafe Connection(string pipeName, string serverName, in EventHandlers handlers, nint context) : this(new HubConnectionBuilder()
         .WithNamedPipe(pipeName, serverName)
     , handlers, context)
     { }
 
-    unsafe Native(string url, delegate* unmanaged<nint, nint, void> accessTokenProvider, in EventHandlers handlers, nint context) : this(new HubConnectionBuilder()
-        .AddMessagePackProtocol()
+    unsafe Connection(string url, delegate* unmanaged<nint, nint, void> accessTokenProvider, in EventHandlers handlers, nint context) : this(new HubConnectionBuilder()
         .WithUrl(url, HttpTransportType.WebSockets, o =>
         {
             if (accessTokenProvider != null)

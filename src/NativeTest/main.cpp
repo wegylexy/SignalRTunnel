@@ -40,11 +40,9 @@ int main(int argc, const char** argv)
 		hub.On("ClientMethod1", 1,
 			[tce](const msgpack::object& args)
 			{
-				fputs("Parsing...\n", stderr);
 				const auto& s = args.via.array.ptr[0].via.str;
 				string a{ s.ptr, static_cast<size_t>(s.size) };
 				fprintf(stderr, "[\"%s\"]\n", a.c_str());
-				fflush(stderr);
 				// TODO: invoke server method
 				return task_from_result().then(
 					[tce]()
