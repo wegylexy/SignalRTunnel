@@ -13,9 +13,9 @@ sealed class Connection : IAsyncDisposable
 {
     internal unsafe readonly struct EventHandlers
     {
-        public readonly delegate* unmanaged<nint, nint, nint, void> Closed = default;
-        public readonly delegate* unmanaged<nint, nint, void> Reconnected = default;
-        public readonly delegate* unmanaged<nint, nint, nint, void> Reconnecting = default;
+        public readonly delegate* unmanaged<nint, nint, nint, void> Closed = null;
+        public readonly delegate* unmanaged<nint, nint, void> Reconnected = null;
+        public readonly delegate* unmanaged<nint, nint, nint, void> Reconnecting = null;
     }
 
     static Connection FromHandle(nint handle) => (Connection)GCHandle.FromIntPtr(handle).Target!;
@@ -27,6 +27,7 @@ sealed class Connection : IAsyncDisposable
         {
             h.Free();
             source.Cancel();
+            source.Dispose();
         };
         h = GCHandle.Alloc(c);
         return Marshal.GetFunctionPointerForDelegate(c);
@@ -47,7 +48,7 @@ sealed class Connection : IAsyncDisposable
     static unsafe Task Callback(Task task, delegate* unmanaged<nint, nint, void> callback, nint context)
     => task.ContinueWith(t =>
     {
-        var m = Marshal.StringToCoTaskMemUTF8(t.IsFaulted ? t.Exception?.InnerException?.Message ?? string.Empty : null);
+        var m = Marshal.StringToCoTaskMemUTF8(t.IsCompletedSuccessfully ? null : t.Exception?.InnerException?.Message ?? string.Empty);
         callback(context, m);
         Marshal.ZeroFreeCoTaskMemUTF8(m);
     });
@@ -135,7 +136,51 @@ sealed class Connection : IAsyncDisposable
         return p;
     }
 
-    // TODO: invoke, send
+    [UnmanagedCallersOnly(EntryPoint = "signalr_invoke_core")]
+    internal static unsafe nint InvokeCore(nint handle, nint methodName, byte* buffer, int bufferSize, delegate* unmanaged<nint, nint, byte*, int, void> callback, nint context)
+    {
+        CancellationTokenSource cts = new();
+        var p = CancelFunctionPointer(cts);
+        FromHandle(handle)._connection
+            .InvokeCoreAsync(Marshal.PtrToStringUTF8(methodName)!, typeof(object), new[] { new ReadOnlySpan<byte>(buffer, bufferSize).ToArray() }, cts.Token)
+            .ContinueWith(t =>
+            {
+                if (t.IsCompletedSuccessfully)
+                {
+                    if (t.Result is byte[] b)
+                    {
+                        fixed (byte* p = b)
+                        {
+                            callback(context, default, p, b.Length);
+                        }
+                    }
+                    else
+                    {
+                        callback(context, default, null, default);
+                    }
+                }
+                else
+                {
+                    var m = Marshal.StringToCoTaskMemUTF8(t.Exception?.InnerException?.Message ?? string.Empty);
+                    callback(context, m, null, default);
+                    Marshal.ZeroFreeCoTaskMemUTF8(m);
+                }
+            });
+        return p;
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "signalr_send_core")]
+    internal static unsafe nint SendCore(nint handle, nint methodName, byte* buffer, int bufferSize, delegate* unmanaged<nint, nint, void> callback, nint context)
+    {
+        CancellationTokenSource cts = new();
+        var p = CancelFunctionPointer(cts);
+        Callback(FromHandle(handle)._connection.SendCoreAsync(
+            Marshal.PtrToStringUTF8(methodName)!,
+            new[] { new ReadOnlySpan<byte>(buffer, bufferSize).ToArray() },
+            cts.Token
+        ), callback, context);
+        return p;
+    }
 
     bool _disposing;
     readonly HubConnection _connection;

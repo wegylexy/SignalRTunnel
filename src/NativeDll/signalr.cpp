@@ -145,7 +145,7 @@ task<void> HubConnection::Dispose()
 void HubConnection::Remove(const char* methodName)
 {
 	auto& state = *((HubConnectionState*)state_);
-	auto& handle = state.handle_;
+	const auto handle = state.handle_;
 	if (handle)
 	{
 		signalr_remove(handle, methodName);
@@ -160,7 +160,7 @@ void HubConnection::Remove(const char* methodName)
 function<void()> HubConnection::On(const char* methodName, const int32_t argc, const OnHandler& handler)
 {
 	auto& state = *((HubConnectionState*)state_);
-	auto& handle = state.handle_;
+	const auto handle = state.handle_;
 	if (handle)
 	{
 		const auto s = make_shared<const OnHandler>(handler);
@@ -169,7 +169,7 @@ function<void()> HubConnection::On(const char* methodName, const int32_t argc, c
 			[](void* context, const char* buffer, const int bufferSize, void(*callback)())
 			{
 				const auto m = msgpack::unpack(buffer, bufferSize);
-				(*static_cast<OnHandler*>(context))(m.get()).then(
+				(*static_cast<OnHandler*>(context))(m.get().via.array).then(
 					[callback](const task<void>& task)
 					{
 						try
@@ -194,7 +194,7 @@ function<void()> HubConnection::On(const char* methodName, const int32_t argc, c
 
 task<void> HubConnection::Start(const cancellation_token& cancellationToken)
 {
-	auto& handle = ((HubConnectionState*)state_)->handle_;
+	const auto handle = ((HubConnectionState*)state_)->handle_;
 	if (handle)
 	{
 		const auto tce = new task_completion_event<void>{};
@@ -213,7 +213,7 @@ task<void> HubConnection::Start(const cancellation_token& cancellationToken)
 
 task<void> HubConnection::Stop(const cancellation_token& cancellationToken)
 {
-	auto& handle = ((HubConnectionState*)state_)->handle_;
+	const auto handle = ((HubConnectionState*)state_)->handle_;
 	if (handle)
 	{
 		const auto tce = new task_completion_event<void>{};
@@ -223,6 +223,32 @@ task<void> HubConnection::Stop(const cancellation_token& cancellationToken)
 			cancellationToken.register_callback(c);
 		}
 		return create_task(*tce, cancellationToken);
+	}
+	else
+	{
+		throw disposed;
+	}
+}
+
+task<msgpack::object> HubConnection::InvokeCore(const char* methodName, const msgpack::object_array& args, const cancellation_token& cancellationToken)
+{
+	const auto handle = ((HubConnectionState*)state_)->handle_;
+	if (handle)
+	{
+		throw runtime_error{ "Not implemented" };
+	}
+	else
+	{
+		throw disposed;
+	}
+}
+
+task<void> HubConnection::SendCore(const char* methodName, const msgpack::object_array& args, const cancellation_token& cancellationToken)
+{
+	const auto handle = ((HubConnectionState*)state_)->handle_;
+	if (handle)
+	{
+		throw runtime_error{ "Not implemented" };
 	}
 	else
 	{

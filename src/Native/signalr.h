@@ -9,6 +9,8 @@ struct SignalREventHandlers
 typedef void (*SignalRAction)();
 typedef void (*SignalRAccessTokenProvider)(void* context, void (*callback)(const char* access_token));
 typedef void (*SignalRCallback)(void* context, const char* error);
+typedef void (*SignalROnHandler)(void* context, const char* buffer, const int bufferSize, void(*callback)());
+typedef void (*SignalRInvokeCallback)(void* context, const char* error, const char* buffer, const int bufferSize);
 
 #ifdef __cplusplus
 extern "C"
@@ -23,13 +25,15 @@ extern "C"
 
 	void signalr_remove(void* handle, const char* methodName);
 
-	SignalRAction signalr_on(void* handle, const char* methodName, const int argc, void(*handler)(void* context, const char* buffer, const int bufferSize, void(*callback)()), void* context);
+	SignalRAction signalr_on(void* handle, const char* methodName, const int argc, SignalROnHandler handler, void* context);
 
 	SignalRAction signalr_start(void* handle, SignalRCallback callback, void* context);
 
 	SignalRAction signalr_stop(void* handle, SignalRCallback callback, void* context);
 
-	// TODO: invoke, send
+	SignalRAction signalr_invoke_core(void* handle, const char* methodName, const char* buffer, const int bufferSize, SignalRInvokeCallback callback, void* context);
+
+	SignalRAction signalr_send_core(void* handle, const char* methodName, const char* buffer, const int bufferSize, SignalRCallback callback, void* context);
 
 #ifdef __cplusplus
 }

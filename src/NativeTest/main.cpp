@@ -38,9 +38,9 @@ int main(int argc, const char** argv)
 		Client hub{ argv[1], argc > 2 ? argv[2] : "." };
 		task_completion_event<void> tce{};
 		hub.On("ClientMethod1", 1,
-			[tce](const msgpack::object& args)
+			[tce](const msgpack::object_array& args)
 			{
-				const auto& s = args.via.array.ptr[0].via.str;
+				const auto& s = args.ptr[0].via.str;
 				string a{ s.ptr, static_cast<size_t>(s.size) };
 				fprintf(stderr, "[\"%s\"]\n", a.c_str());
 				// TODO: invoke server method

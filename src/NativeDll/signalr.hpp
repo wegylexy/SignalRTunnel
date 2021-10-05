@@ -19,7 +19,7 @@ namespace FlyByWireless
 		class HubConnection
 		{
 		public:
-			typedef std::function<concurrency::task<void>(const msgpack::object& object)> OnHandler;
+			typedef std::function<concurrency::task<void>(const msgpack::object_array& object)> OnHandler;
 
 			SIGNALR_API virtual concurrency::task<void> OnClosed(const char* error);
 
@@ -42,6 +42,10 @@ namespace FlyByWireless
 			SIGNALR_API concurrency::task<void> Start(const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none());
 
 			SIGNALR_API concurrency::task<void> Stop(const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none());
+
+			SIGNALR_API concurrency::task<msgpack::object> InvokeCore(const char* methodName, const msgpack::object_array& args, const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none());
+
+			SIGNALR_API concurrency::task<void> SendCore(const char* methodName, const msgpack::object_array& args, const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none());
 
 		private:
 			const void* state_;
