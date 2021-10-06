@@ -6,12 +6,6 @@ using namespace std;
 using namespace concurrency;
 using namespace FlyByWireless::SignalRTunnel;
 
-struct ClientMethod1
-{
-	string a;
-	MSGPACK_DEFINE(a);
-};
-
 class Client : public HubConnection
 {
 public:
@@ -44,9 +38,9 @@ int main(int argc, const char** argv)
 		Client hub{ argv[1], argc > 2 ? argv[2] : "." };
 		task_completion_event<void> tce{};
 		hub.On("ClientMethod1",
-			function{ [tce](const ClientMethod1& args)
+			function{ [tce](const string& a)
 			{
-				fprintf(stderr, "[\"%s\"]\n", args.a.c_str());
+				fprintf(stderr, "[\"%s\"]\n", a.c_str());
 				// TODO: invoke server method
 				return task_from_result().then(
 					[tce]()
