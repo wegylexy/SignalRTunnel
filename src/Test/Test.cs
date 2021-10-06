@@ -24,6 +24,8 @@ namespace FlyByWireless.SignalRTunnel.Test
     public interface ITestClient
     {
         Task ClientMethod1(string a);
+
+        Task MsgPackTimeVoid(DateTime a);
     }
 
     sealed class TestHub : Hub<ITestClient>
@@ -132,15 +134,22 @@ namespace FlyByWireless.SignalRTunnel.Test
                 services.AddSignalR().AddMessagePackProtocol().AddNamedPipe<TestHub>(pipeName, maxNumberOfServerInstances)
             ).Build();
             await app.StartAsync();
-            async Task<HubConnection> NewClient()
+            async Task<HubConnection> TestClientAsync()
             {
                 var client = new HubConnectionBuilder().AddMessagePackProtocol().WithNamedPipe(pipeName).Build();
                 await client.StartAsync();
+                {
+                    var expected = Guid.NewGuid().ToString();
+                    TaskCompletionSource<string> tcs = new();
+                    client.On(nameof(ITestClient.ClientMethod1), (string a) => tcs.SetResult(a));
+                    await client.InvokeAsync(nameof(TestHub.HubMethod1), expected);
+                    Assert.Equal(expected, await tcs.Task);
+                }
                 return client;
             };
             var clients = await Task.WhenAll(Enumerable.Range(0, maxNumberOfServerInstances)
-                .Select(_ => NewClient()));
-            var extraTask = NewClient();
+                .Select(_ => TestClientAsync()));
+            var extraTask = TestClientAsync();
             // TODO: test hub methods and events
             Assert.False(extraTask.IsCompleted, "Exceeded max number of server instances.");
             Assert.True(clients.All(c => c.State == HubConnectionState.Connected), "Max number of server instances not reached.");
@@ -230,52 +239,55 @@ namespace FlyByWireless.SignalRTunnel.Test
             Assert.True(File.Exists(path), $"{path} does not exist.");
             var pipeName = Guid.NewGuid().ToString("N");
             using var app = Host.CreateDefaultBuilder().ConfigureServices(services =>
-                services.AddSignalR().AddMessagePackProtocol().AddNamedPipe<TestHub>(pipeName, 1)
+                services.AddSignalR().AddMessagePackProtocol().AddNamedPipe<TestHub>(pipeName, 2)
             ).Build();
             await app.StartAsync();
             var context = app.Services.GetRequiredService<IHubContext<TestHub, ITestClient>>();
             using Process client = new()
             {
-                StartInfo = new(path, pipeName)
+                StartInfo = new(path)
                 {
                     UseShellExecute = false,
                     RedirectStandardError = true,
-                    StandardErrorEncoding = Encoding.UTF8
+                    StandardErrorEncoding = Encoding.UTF8,
+                    RedirectStandardOutput = true,
+                    StandardOutputEncoding = Encoding.UTF8
                 },
                 EnableRaisingEvents = true
             };
+            client.StartInfo.ArgumentList.Add(pipeName);
+            client.StartInfo.ArgumentList.Add(".");
+            var expected = Guid.NewGuid().ToString();
+            client.StartInfo.ArgumentList.Add(expected);
             Assert.True(client.Start());
             var errorTask = client.StandardError.ReadToEndAsync();
             try
             {
                 using CancellationTokenSource cts = new(5000);
-                EventHandler h = (_, _) => cts.Cancel();
-                try
+                using var sweeper = cts.Token.Register(() =>
                 {
-                    client.Exited += h;
+                    if (!client.HasExited)
                     {
-                        // TODO: make client invoke first instead
-                        await Task.Delay(1000);
-                        await context.Clients.All.ClientMethod1(Guid.NewGuid().ToString());
+                        client.Kill(true);
                     }
-                    // TODO: raise client event
-                    // TODO: assert server method
-                    await client.WaitForExitAsync(cts.Token);
-                }
-                finally
-                {
-                    client.Exited -= h;
-                }
+                });
+                Assert.Equal("Ready", await client.StandardOutput.ReadLineAsync());
+                await context.Clients.All.MsgPackTimeVoid(DateTime.UtcNow);
+                Assert.Equal("Completed", await client.StandardOutput.ReadLineAsync());
+                await client.WaitForExitAsync(cts.Token);
             }
             finally
             {
-                if (!client.HasExited)
+                var exited = client.HasExited;
+                if (!exited)
                 {
                     client.Kill(true);
                     await client.WaitForExitAsync();
                 }
                 var error = await errorTask;
-                Assert.True(client.ExitCode == default && string.IsNullOrEmpty(error), error.TrimEnd('\n', '\r'));
+                Assert.True(exited && client.ExitCode == default && string.IsNullOrEmpty(error),
+                    $"Exited with {client.ExitCode}" + Environment.NewLine + error.TrimEnd('\n', '\r')
+                );
             }
             await app.StopAsync();
         }

@@ -1,6 +1,5 @@
-#define _HAS_ITERATOR_DEBUGGING 0
 #include <signalr.hpp>
-#include <string>
+#include <sstream>
 
 using namespace std;
 using namespace concurrency;
@@ -35,31 +34,64 @@ int main(int argc, const char** argv)
 {
 	try
 	{
-		Client hub{ argv[1], argc > 2 ? argv[2] : "." };
-		task_completion_event<void> tce{};
-		hub.On("ClientMethod1",
-			function{ [tce](const string& a)
+		Client hub{ argv[1], argv[2] };
+		task_completion_event<string> tce{};
+		hub.On("MsgPackTask", function{ [tce]() { return task_from_result(); } });
+		hub.On("MsgPackVoid", function{ [tce]() {} });
+		hub.On("MsgPackAsTask", function{ [tce](const bool&, const char&, const short&, const int&, const float&, const double&) { return task_from_result(); } });
+		hub.On("MsgPackAsVoid", function{ [tce](const bool&, const char&, const short&, const int&, const float&, const double&) {} });
+		hub.On("MsgPackTimeTask", function{ [tce](const chrono::system_clock::time_point&) { return task_from_result(); } });
+		hub.On("MsgPackTimeVoid", // .NET DateTime => MessagePack timestamp => C++ time_point
+			function{ [tce](const chrono::system_clock::time_point& tp)
 			{
-				fprintf(stderr, "[\"%s\"]\n", a.c_str());
-				// TODO: invoke server method
-				return task_from_result().then(
-					[tce]()
+				const auto received = chrono::system_clock::now();
+				auto t = chrono::system_clock::to_time_t(tp);
+				if (abs(chrono::duration_cast<chrono::seconds>(received - tp).count()) > 1)
+				{
+					tm m;
+					if (!gmtime_s(&m, &t))
 					{
-						tce.set();
+						ostringstream stream{};
+						stream << put_time(&m, "%FT%TZ");
+						fprintf(stderr, "Sent: %s\n", stream.str().c_str());
+						stream.clear();
+						t = chrono::system_clock::to_time_t(received);
+						gmtime_s(&m, &t);
+						stream << put_time(&m, "%FT%TZ");
+						fprintf(stderr, "Recevied: %s\n", stream.str().c_str());
 					}
-				);
+				}
 			} }
 		);
-		hub.Start().then(
-			[&hub, tce]()
+		hub.On("ClientMethod1",
+			function{ [&hub, tce](const string& a)
 			{
-				thread{ [tce]() {
-					this_thread::sleep_for(chrono::milliseconds(1000));
-					tce.set_exception(make_exception_ptr(task_canceled{"Timeout"}));
-				} }.detach();
-				return create_task(tce);
-			}
-		).then(
+				tce.set(a);
+			} }
+		);
+		hub.Start().then([expected = argv[3], &hub, tce]()
+		{
+			puts("Ready");
+			return hub.Invoke<void>("HubMethod1", expected).then(
+				[tce]()
+				{
+					thread{ [tce]() {
+						this_thread::sleep_for(chrono::milliseconds(1000));
+						tce.set_exception(make_exception_ptr(task_canceled{"Timeout"}));
+					} }.detach();
+					return create_task(tce);
+				}
+			).then(
+				[expected](const string& actual)
+				{
+					if (actual != expected)
+					{
+						throw invalid_argument{ "Unexpected value" };
+					}
+				}
+			)
+					;
+		}).then(
 			[&hub]()
 			{
 				return hub.Stop();
@@ -82,6 +114,6 @@ int main(int argc, const char** argv)
 		fputs("Crashed\n", stderr);
 		return 2;
 	}
-	fputs("Completed\n", stderr);
+	puts("Completed");
 	return 0;
 }

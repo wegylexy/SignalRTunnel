@@ -12,6 +12,21 @@
 #define SIGNALR_API __declspec(dllimport)
 #endif
 
+namespace msgpack
+{
+	MSGPACK_API_VERSION_NAMESPACE(MSGPACK_DEFAULT_API_NS)
+	{
+		namespace adaptor
+		{
+			template<>
+			struct as<void>
+			{
+				void operator()(msgpack::object const& o) const {}
+			};
+		}
+	}
+}
+
 namespace FlyByWireless
 {
 	namespace SignalRTunnel
@@ -94,7 +109,44 @@ namespace FlyByWireless
 
 			SIGNALR_API concurrency::task<std::shared_ptr<msgpack::object_handle>> InvokeCore(const char* methodName, const msgpack::object& args, const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none());
 
+			template<typename Result, typename...Args>
+			concurrency::task<Result> Invoke(const char* methodName, const Args&...args, const concurrency::cancellation_token& cancellationToken)
+			{
+				msgpack::object o{};
+				msgpack::zone z{};
+				msgpack::type::make_define_array(args...).msgpack_object(o, z);
+				return InvokeCore(methodName, o, cancellationToken).then(
+					[](const std::shared_ptr<msgpack::object_handle> args)
+					{
+						return args->get().as<Result>();
+					}
+				);
+			}
+
+			template<typename Result, typename...Args>
+			concurrency::task<Result> Invoke(const char* methodName, const Args&...args)
+			{
+				msgpack::object o{};
+				msgpack::zone z{};
+				msgpack::type::make_define_array(args...).msgpack_object(&o, z);
+				return InvokeCore(methodName, o, concurrency::cancellation_token::none()).then(
+					[](const std::shared_ptr<msgpack::object_handle> args)
+					{
+						return args->get().as<Result>();
+					}
+				);
+			}
+
 			SIGNALR_API concurrency::task<void> SendCore(const char* methodName, const msgpack::object& args, const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none());
+
+			template<typename...Args>
+			concurrency::task<void> Send(const char* methodName, const Args&...args, const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none())
+			{
+				msgpack::object o{};
+				msgpack::zone z{};
+				msgpack::type::make_define_array(args...).msgpack_object(o, z);
+				return SendCore(methodName, o, cancellationToken);
+			}
 
 		private:
 			const void* state_;

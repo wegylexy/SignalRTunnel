@@ -48,7 +48,7 @@ sealed class Connection : IAsyncDisposable
     static unsafe Task Callback(Task task, delegate* unmanaged<nint, nint, void> callback, nint context)
     => task.ContinueWith(t =>
     {
-        var m = Marshal.StringToCoTaskMemUTF8(t.IsCompletedSuccessfully ? null : t.Exception?.InnerException?.Message ?? string.Empty);
+        var m = Marshal.StringToCoTaskMemUTF8(t.IsCompletedSuccessfully ? null : t.Exception?.InnerException?.ToString() ?? string.Empty);
         callback(context, m);
         Marshal.ZeroFreeCoTaskMemUTF8(m);
     });
@@ -161,7 +161,7 @@ sealed class Connection : IAsyncDisposable
                 }
                 else
                 {
-                    var m = Marshal.StringToCoTaskMemUTF8(t.Exception?.InnerException?.Message ?? string.Empty);
+                    var m = Marshal.StringToCoTaskMemUTF8(t.Exception?.InnerException?.ToString() ?? string.Empty);
                     callback(context, m, null, default);
                     Marshal.ZeroFreeCoTaskMemUTF8(m);
                 }
@@ -198,7 +198,7 @@ sealed class Connection : IAsyncDisposable
         {
             TaskCompletionSource tcs = new();
             GCHandle h = default;
-            var m = Marshal.StringToCoTaskMemUTF8(ex?.Message);
+            var m = Marshal.StringToCoTaskMemUTF8(ex?.ToString());
             Action r = () =>
             {
                 h.Free();

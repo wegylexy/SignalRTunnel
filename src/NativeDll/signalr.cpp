@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "signalr.hpp"
 #include "signalr.h"
+#include <sstream>
 #include <msgpack/unpack.hpp>
 
 using namespace std;
@@ -235,7 +236,28 @@ task<shared_ptr<msgpack::object_handle>> HubConnection::InvokeCore(const char* m
 	const auto handle = ((HubConnectionState*)state_)->handle_;
 	if (handle)
 	{
-		throw runtime_error{ "Not implemented" };
+		stringstream stream{};
+		msgpack::pack(stream, args);
+		const auto buffer = stream.str();
+		stream.clear();
+		const auto tce = new task_completion_event<shared_ptr<msgpack::object_handle>>{};
+		const auto c = signalr_invoke_core(handle, methodName, buffer.data(), buffer.size(),
+			[](void* context, const char* error, const char* buffer, const int bufferSize)
+			{
+				auto p = static_cast<task_completion_event<shared_ptr<msgpack::object_handle>>*>(context);
+				if (error)
+				{
+					p->set_exception(make_exception_ptr(std::runtime_error(error)));
+				}
+				else
+				{
+					const auto s = make_shared<msgpack::object_handle>();
+					msgpack::unpack(*s, buffer, bufferSize);
+					p->set(s);
+				}
+				delete p;
+			}, tce);
+		return create_task(*tce, cancellationToken);
 	}
 	else
 	{
@@ -248,7 +270,13 @@ task<void> HubConnection::SendCore(const char* methodName, const msgpack::object
 	const auto handle = ((HubConnectionState*)state_)->handle_;
 	if (handle)
 	{
-		throw runtime_error{ "Not implemented" };
+		stringstream stream{};
+		msgpack::pack(stream, args);
+		const auto buffer = stream.str();
+		stream.clear();
+		const auto tce = new task_completion_event<void>{};
+		const auto c = signalr_send_core(handle, methodName, buffer.data(), buffer.size(), &ErrorCallback, tce);
+		return create_task(*tce, cancellationToken);
 	}
 	else
 	{
