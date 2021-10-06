@@ -230,7 +230,7 @@ task<void> HubConnection::Stop(const cancellation_token& cancellationToken)
 	}
 }
 
-task<msgpack::object> HubConnection::InvokeCore(const char* methodName, const msgpack::object& args, const cancellation_token& cancellationToken)
+task<shared_ptr<msgpack::object_handle>> HubConnection::InvokeCore(const char* methodName, const msgpack::object& args, const cancellation_token& cancellationToken)
 {
 	const auto handle = ((HubConnectionState*)state_)->handle_;
 	if (handle)
