@@ -44,27 +44,62 @@ sealed class NativeMessagePackHubProtocol : IHubProtocol
                 {
                     MessagePackReader reader = new(input.Slice(read, length));
                     var count = reader.ReadArrayHeader();
+                    static Dictionary<string, string>? H(ref MessagePackReader reader)
+                    {
+                        Dictionary<string, string>? headers = null;
+                        if (reader.ReadMapHeader() is > 0 and var headerCount)
+                        {
+                            headers = new(StringComparer.Ordinal);
+                            for (var i = 0; i < headerCount; ++i)
+                            {
+                                var key = reader.ReadString();
+                                var value = reader.ReadString();
+                                headers.Add(key, value);
+                            }
+                        }
+                        return headers;
+                    }
+                    string? I(ref MessagePackReader reader)
+                    {
+                        var i = reader.ReadString();
+                        return string.IsNullOrEmpty(i) ? null : i;
+                    }
                     switch (reader.ReadInt32())
                     {
                         case HubProtocolConstants.InvocationMessageType:
                             {
-                                Dictionary<string, string>? headers = null;
-                                if (reader.ReadMapHeader() is > 0 and var headerCount)
-                                {
-                                    headers = new(StringComparer.Ordinal);
-                                    for (var i = 0; i < headerCount; ++i)
-                                    {
-                                        var key = reader.ReadString();
-                                        var value = reader.ReadString();
-                                        headers.Add(key, value);
-                                    }
-                                }
+                                var headers = H(ref reader);
                                 message = new InvocationMessage
                                 (
-                                    reader.ReadString() is { Length: > 0 } and var id ? id : null,
+                                    I(ref reader),
                                     reader.ReadString(),
                                     new[] { input.Slice(read + reader.Consumed).ToArray() }
                                 )
+                                {
+                                    Headers = headers
+                                };
+                            }
+                            break;
+                        case HubProtocolConstants.CompletionMessageType:
+                            {
+                                var headers = H(ref reader);
+                                var invocationId = reader.ReadString();
+                                string? error = null;
+                                byte[]? result = null;
+                                switch (reader.ReadInt32())
+                                {
+                                    case 1: // error
+                                        error = reader.ReadString();
+                                        break;
+                                    case 2: // void
+                                        break;
+                                    case 3: // non-void
+                                        result = input.Slice(read + reader.Consumed).ToArray();
+                                        break;
+                                    default:
+                                        throw new InvalidDataException("Invalid invocation result kind.");
+                                }
+                                message = new CompletionMessage(invocationId, error, result, result != null)
                                 {
                                     Headers = headers
                                 };
@@ -84,6 +119,7 @@ sealed class NativeMessagePackHubProtocol : IHubProtocol
                             break;
                         default:
                             message = null;
+                            Console.Error.WriteLine("Unknown");
                             break;
                     }
                     return message != null;
@@ -118,7 +154,7 @@ sealed class NativeMessagePackHubProtocol : IHubProtocol
             }
             else
             {
-                writer.WriteNil();
+                writer.WriteMapHeader(0);
             }
         }
         static void S(string[]? streamIds, ref MessagePackWriter writer)
@@ -185,29 +221,27 @@ sealed class NativeMessagePackHubProtocol : IHubProtocol
                 throw new InvalidDataException(FormattableString.Invariant($"Unexpected messgae type: {message.GetType().Name}"));
         }
         writer.Flush();
-        var length = (int)stream.Length;
-        {
-            Span<byte> prefix = stackalloc byte[5];
-            var bytes = 0;
-            for (var l = length; ;)
-            {
-                ++bytes;
-                ref var b = ref prefix[bytes];
-                b = (byte)(l & 0x7F);
-                l >>= 7;
-                if (l == 0)
-                {
-                    break;
-                }
-                b |= 0x80;
-            }
-            output.Write(prefix[..bytes]);
-        }
         stream.Position = 0;
-        do
+        var length = (int)stream.Length;
+        Span<byte> prefix = stackalloc byte[5];
+        var bytes = 0;
+        for (var l = length; ;)
         {
-            length -= stream.Read(output.GetSpan(Math.Min(length, 4096)));
-        } while (length > 0);
-
+            ref var b = ref prefix[bytes++];
+            b = (byte)(l & 0x7F);
+            l >>= 7;
+            if (l == 0)
+            {
+                break;
+            }
+            b |= 0x80;
+        }
+        var buffer = output.GetSpan(Math.Min(length += bytes, 4096));
+        prefix[..bytes].CopyTo(buffer);
+        output.Advance(bytes += stream.Read(buffer[bytes..]));
+        while ((length -= bytes) > 0)
+        {
+            output.Advance(bytes = stream.Read(output.GetSpan(Math.Min(length, 4096))));
+        }
     }
 }

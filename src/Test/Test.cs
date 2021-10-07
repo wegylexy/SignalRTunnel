@@ -1,4 +1,3 @@
-using MessagePack;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -14,9 +13,9 @@ using System.Runtime.InteropServices;
 using System.Security.Claims;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace FlyByWireless.SignalRTunnel.Test
 {
@@ -74,92 +73,180 @@ namespace FlyByWireless.SignalRTunnel.Test
     }
 #pragma warning restore VSTHRD200 // Use "Async" suffix for async methods
 
-    public class Test
+    public class ManagedTest
     {
-        [Fact]
-        public async Task TunnelAsync()
+        public enum DisconnectType
+        {
+            ClientStop,
+            ClientAbort,
+            ServerAbort,
+            InvokeAbort,
+            BothAbort
+        }
+
+        [Theory]
+        [InlineData(DisconnectType.ClientStop)]
+        [InlineData(DisconnectType.ClientAbort)]
+        [InlineData(DisconnectType.ServerAbort)]
+        [InlineData(DisconnectType.InvokeAbort)]
+        [InlineData(DisconnectType.BothAbort)]
+        public async Task TunnelAsync(DisconnectType disconnectType)
         {
             using var app = Host.CreateDefaultBuilder().ConfigureServices(services =>
-                services.AddSignalR().AddJsonProtocol().AddMessagePackProtocol()
+                services.AddSignalR().AddMessagePackProtocol()
             ).Build();
             await app.StartAsync();
-            var (clientStream, serverStream) = FullDuplexStream.CreatePair();
-            using (clientStream)
-            using (serverStream)
+            var (serverStream, clientStream) = FullDuplexStream.CreatePair();
+            await using (serverStream)
             {
-                var client = new HubConnectionBuilder()
-                    .AddMessagePackProtocol()
-                    .WithTunnel(clientStream)
-                    .Build();
-                TaskCompletionSource<string>? tcs = null;
-                _ = client.On(nameof(ITestClient.ClientMethod1), (string a) => tcs!.SetResult(a));
-                var handler = app.Services.GetRequiredService<HubConnectionHandler<TestHub>>();
-                var start = client.StartAsync();
-                DuplexContext? connectionContext = null;
-                var connection = handler.OnConnectedAsync(serverStream, user: new(new ClaimsIdentity(new Claim[]
+                var disconnection = Task.Run(async () =>
                 {
-                    new(ClaimTypes.Role, "C")
-                }, "Mock")), configure: c => connectionContext = c);
-                Assert.NotNull(connectionContext?.ConnectionId);
-                await start;
-                Assert.Equal(HubConnectionState.Connected, client.State);
+                    var handler = app.Services.GetRequiredService<HubConnectionHandler<TestHub>>();
+                    DuplexContext? connectionContext = null;
+                    var connection = handler.OnConnectedAsync(serverStream, user: new(new ClaimsIdentity(new Claim[]
+                    {
+                        new(ClaimTypes.Role, "C")
+                    }, "Mock")), configure: c => connectionContext = c);
+                    Assert.NotNull(connectionContext?.ConnectionId);
+                    await using (serverStream)
+                    await using (connectionContext)
+                    {
+                        await connection;
+                    }
+                });
+                await using (clientStream)
                 {
-                    var expected = Guid.NewGuid().ToString();
-                    tcs = new();
-                    await client.InvokeAsync(nameof(TestHub.HubMethod1), expected);
-                    Assert.Equal(expected, await tcs.Task);
+                    var client = new HubConnectionBuilder()
+                        .AddMessagePackProtocol()
+                        .WithTunnel(clientStream)
+                        .Build();
+                    client.HandshakeTimeout = client.ServerTimeout = TimeSpan.FromSeconds(1);
+                    await client.StartAsync();
+                    Assert.Equal(HubConnectionState.Connected, client.State);
+                    {
+                        var expected = Guid.NewGuid().ToString();
+                        TaskCompletionSource<string> tcs = new();
+                        {
+                            using var on = client.On(nameof(ITestClient.ClientMethod1), (string a) => tcs.SetResult(a));
+                            await client.InvokeAsync(nameof(TestHub.HubMethod1), expected).WaitAsync(TimeSpan.FromSeconds(1));
+                            Assert.Equal(expected, await tcs.Task);
+                        }
+                    }
+                    {
+                        var hubContext = app.Services.GetRequiredService<IHubContext<TestHub, ITestClient>>();
+                        var expected = Guid.NewGuid().ToString();
+                        TaskCompletionSource<string> tcs = new();
+                        {
+                            using var on = client.On(nameof(ITestClient.ClientMethod1), (string a) => tcs.SetResult(a));
+                            await hubContext.Clients.All.ClientMethod1(expected).WaitAsync(TimeSpan.FromSeconds(1));
+                            Assert.Equal(expected, await tcs.Task);
+                        }
+                    }
+                    await Assert.ThrowsAsync<HubException>(() => client.InvokeAsync(nameof(TestHub.AOnly))).WaitAsync(TimeSpan.FromSeconds(1));
+                    await client.InvokeAsync(nameof(TestHub.BOrCOnly)).WaitAsync(TimeSpan.FromSeconds(1));
+                    Assert.Equal(HubConnectionState.Connected, client.State);
+                    switch (disconnectType)
+                    {
+                        case DisconnectType.ClientStop:
+                            await client.StopAsync().WaitAsync(TimeSpan.FromSeconds(1));
+                            break;
+                        case DisconnectType.ClientAbort:
+                            await clientStream.DisposeAsync();
+                            await Task.Delay(client.ServerTimeout); // TODO: IConnectionLifetimeFeature
+                            break;
+                        case DisconnectType.ServerAbort:
+                            await serverStream.DisposeAsync();
+                            await Task.Delay(client.ServerTimeout); // TODO: IConnectionLifetimeFeature
+                            break;
+                        case DisconnectType.InvokeAbort:
+                            await Assert.ThrowsAsync<TaskCanceledException>(() => client.InvokeAsync(nameof(TestHub.Abort))).WaitAsync(TimeSpan.FromSeconds(1));
+                            break;
+                        case DisconnectType.BothAbort:
+                            {
+                                var c = clientStream.DisposeAsync();
+                                var s = serverStream.DisposeAsync();
+                                await c;
+                                await s;
+                                await Task.Delay(client.ServerTimeout); // TODO: IConnectionLifetimeFeature
+                            }
+                            break;
+                    }
+                    Assert.Equal(HubConnectionState.Disconnected, client.State);
                 }
-                {
-                    var hubContext = app.Services.GetRequiredService<IHubContext<TestHub, ITestClient>>();
-                    var expected = Guid.NewGuid().ToString();
-                    tcs = new();
-                    await hubContext.Clients.All.ClientMethod1(expected);
-                    Assert.Equal(expected, await tcs.Task);
-                }
-                await Assert.ThrowsAsync<HubException>(() => client.InvokeAsync(nameof(TestHub.AOnly)));
-                await client.InvokeAsync(nameof(TestHub.BOrCOnly));
-                await Assert.ThrowsAsync<TaskCanceledException>(() => client.InvokeAsync(nameof(TestHub.Abort)));
-                await connection;
+                await disconnection.WaitAsync(TimeSpan.FromSeconds(1));
             }
             await app.StopAsync();
         }
 
         [Theory]
-        [InlineData(1)]
-        [InlineData(2)]
-        public async Task NamedPipeAsync(int maxNumberOfServerInstances)
+        [InlineData(1, false, false)]
+        [InlineData(2, false, false)]
+        [InlineData(1, false, true)]
+        [InlineData(2, false, true)]
+        [InlineData(1, true, false)]
+        [InlineData(2, true, false)]
+        [InlineData(1, true, true)]
+        [InlineData(2, true, true)]
+        public async Task NamedPipeAsync(int maxNumberOfServerInstances, bool delay, bool invokeOnStart)
         {
             var pipeName = Guid.NewGuid().ToString("N");
             using var app = Host.CreateDefaultBuilder().ConfigureServices(services =>
                 services.AddSignalR().AddMessagePackProtocol().AddNamedPipe<TestHub>(pipeName, maxNumberOfServerInstances)
             ).Build();
             await app.StartAsync();
-            async Task<HubConnection> TestClientAsync()
+            async Task<HubConnection> NewClientAsync()
             {
                 var client = new HubConnectionBuilder().AddMessagePackProtocol().WithNamedPipe(pipeName).Build();
-                await client.StartAsync();
+                client.HandshakeTimeout = client.ServerTimeout = TimeSpan.FromSeconds(5);
+                await client.StartAsync().WaitAsync(TimeSpan.FromSeconds(1));
+                if (delay)
+                {
+                    await Task.Delay(1);
+                }
+                if (invokeOnStart)
                 {
                     var expected = Guid.NewGuid().ToString();
                     TaskCompletionSource<string> tcs = new();
-                    client.On(nameof(ITestClient.ClientMethod1), (string a) => tcs.SetResult(a));
-                    await client.InvokeAsync(nameof(TestHub.HubMethod1), expected);
-                    Assert.Equal(expected, await tcs.Task);
+                    using var on = client.On(nameof(ITestClient.ClientMethod1), (string a) => tcs.SetResult(a));
+                    await client.InvokeAsync(nameof(TestHub.HubMethod1), expected).WaitAsync(TimeSpan.FromSeconds(1));
+                    Assert.Equal(expected, await tcs.Task.WaitAsync(TimeSpan.FromSeconds(1)));
                 }
                 return client;
             };
             var clients = await Task.WhenAll(Enumerable.Range(0, maxNumberOfServerInstances)
-                .Select(_ => TestClientAsync()));
-            var extraTask = TestClientAsync();
-            // TODO: test hub methods and events
+                .Select(_ => NewClientAsync()))
+                .WaitAsync(TimeSpan.FromSeconds(1));
+            var extraTask = NewClientAsync();
             Assert.False(extraTask.IsCompleted, "Exceeded max number of server instances.");
             Assert.True(clients.All(c => c.State == HubConnectionState.Connected), "Max number of server instances not reached.");
-            await Task.WhenAll(clients.Select(c => c.StopAsync()));
-            var extra = await extraTask;
-            Assert.True(extra.State == HubConnectionState.Connected);
-            await extra.StopAsync();
-            Assert.True(extra.State == HubConnectionState.Disconnected);
-            await app.StopAsync();
+            await Task.WhenAll(clients.Select(async client =>
+            {
+                {
+                    var expected = Guid.NewGuid().ToString();
+                    TaskCompletionSource<string> tcs = new();
+                    using var on = client.On(nameof(ITestClient.ClientMethod1), (string a) => tcs.SetResult(a));
+                    await client.InvokeAsync(nameof(TestHub.HubMethod1), expected).WaitAsync(TimeSpan.FromSeconds(1));
+                    Assert.Equal(expected, await tcs.Task.WaitAsync(TimeSpan.FromSeconds(1)));
+                }
+                await client.StopAsync().WaitAsync(TimeSpan.FromSeconds(1));
+                await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
+            })).WaitAsync(TimeSpan.FromSeconds(1));
+            {
+                var extra = await extraTask;
+                Assert.Equal(HubConnectionState.Connected, extra.State);
+                await extra.StopAsync().WaitAsync(TimeSpan.FromSeconds(1));
+                Assert.Equal(HubConnectionState.Disconnected, extra.State);
+                await extra.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
+            }
+            await app.StopAsync().WaitAsync(TimeSpan.FromSeconds(1));
         }
+    }
+
+    public class NativeTest
+    {
+        readonly ITestOutputHelper _output;
+
+        public NativeTest(ITestOutputHelper output) => _output = output;
 
         [Fact]
         public void FunctionPointer()
@@ -184,47 +271,6 @@ namespace FlyByWireless.SignalRTunnel.Test
             Assert.True(tcs.Task.IsCompletedSuccessfully);
         }
 
-        [Theory]
-        [InlineData(null)]
-        [InlineData(true)]
-        [InlineData(false)]
-        [InlineData((byte)3)]
-        [InlineData((byte)254)]
-        [InlineData((short)259)]
-        [InlineData((short)-259)]
-        [InlineData(123456789)]
-        [InlineData(-123456789)]
-        [InlineData(1234567890123)]
-        [InlineData(-1234567890123)]
-        [InlineData(123.45f)]
-        [InlineData(123.45)]
-        [InlineData("Hello, world!")]
-        public void Deserialize<T>(T? value)
-        => Assert.Equal(value, Convert.ChangeType(MessagePackSerializer.Deserialize(typeof(object), MessagePackSerializer.Serialize(typeof(T), value)), typeof(T)));
-
-        [Fact]
-        public void DeserializeDateTime() => Deserialize(DateTime.UtcNow);
-
-        [Fact]
-        public void DeserializeArray()
-        {
-            var e = new object?[]
-            {
-                null,
-                true, false,
-                (byte)3, (byte)254, (short)259, (short)-259, 123456789, -123456789, 1234567890123, -1234567890123, 123.45f, 123.45,
-                "Hello, world!",
-                DateTime.UtcNow
-            };
-            Assert.Equal(e, ((object[])MessagePackSerializer.Deserialize(typeof(object), MessagePackSerializer.Serialize(e)))
-                .Select((o, i) => Convert.ChangeType(o, e[i]?.GetType() ?? typeof(object)))
-            );
-        }
-    }
-
-    public class NativeTest
-    {
-
         [Fact]
         public async Task NativeAsync()
         {
@@ -239,7 +285,7 @@ namespace FlyByWireless.SignalRTunnel.Test
             Assert.True(File.Exists(path), $"{path} does not exist.");
             var pipeName = Guid.NewGuid().ToString("N");
             using var app = Host.CreateDefaultBuilder().ConfigureServices(services =>
-                services.AddSignalR().AddMessagePackProtocol().AddNamedPipe<TestHub>(pipeName, 2)
+                services.AddSignalR().AddMessagePackProtocol().AddNamedPipe<TestHub>(pipeName, 1)
             ).Build();
             await app.StartAsync();
             var context = app.Services.GetRequiredService<IHubContext<TestHub, ITestClient>>();
@@ -259,22 +305,19 @@ namespace FlyByWireless.SignalRTunnel.Test
             client.StartInfo.ArgumentList.Add(".");
             var expected = Guid.NewGuid().ToString();
             client.StartInfo.ArgumentList.Add(expected);
+            client.ErrorDataReceived += (_, e) => _output.WriteLine(e.Data);
             Assert.True(client.Start());
-            var errorTask = client.StandardError.ReadToEndAsync();
+            client.BeginErrorReadLine();
             try
             {
-                using CancellationTokenSource cts = new(5000);
-                using var sweeper = cts.Token.Register(() =>
-                {
-                    if (!client.HasExited)
-                    {
-                        client.Kill(true);
-                    }
-                });
-                Assert.Equal("Ready", await client.StandardOutput.ReadLineAsync());
-                await context.Clients.All.MsgPackTimeVoid(DateTime.UtcNow);
-                Assert.Equal("Completed", await client.StandardOutput.ReadLineAsync());
-                await client.WaitForExitAsync(cts.Token);
+                Assert.Equal("Ready", await client.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(1)));
+                await context.Clients.All.MsgPackTimeVoid(DateTime.UtcNow).WaitAsync(TimeSpan.FromSeconds(1));
+                Assert.Equal("Completed", await client.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+                await client.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(1));
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
             }
             finally
             {
@@ -284,10 +327,7 @@ namespace FlyByWireless.SignalRTunnel.Test
                     client.Kill(true);
                     await client.WaitForExitAsync();
                 }
-                var error = await errorTask;
-                Assert.True(exited && client.ExitCode == default && string.IsNullOrEmpty(error),
-                    $"Exited with {client.ExitCode}" + Environment.NewLine + error.TrimEnd('\n', '\r')
-                );
+                Assert.True(exited && client.ExitCode == default, $"Exited with {client.ExitCode}");
             }
             await app.StopAsync();
         }

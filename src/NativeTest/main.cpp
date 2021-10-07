@@ -35,14 +35,13 @@ int main(int argc, const char** argv)
 	try
 	{
 		Client hub{ argv[1], argv[2] };
-		task_completion_event<string> tce{};
-		hub.On("MsgPackTask", function{ [tce]() { return task_from_result(); } });
-		hub.On("MsgPackVoid", function{ [tce]() {} });
-		hub.On("MsgPackAsTask", function{ [tce](const bool&, const char&, const short&, const int&, const float&, const double&) { return task_from_result(); } });
-		hub.On("MsgPackAsVoid", function{ [tce](const bool&, const char&, const short&, const int&, const float&, const double&) {} });
-		hub.On("MsgPackTimeTask", function{ [tce](const chrono::system_clock::time_point&) { return task_from_result(); } });
+		hub.On("MsgPackTask", function{ []() { return task_from_result(); } });
+		hub.On("MsgPackVoid", function{ []() {} });
+		hub.On("MsgPackAsTask", function{ [](const bool&, const char&, const short&, const int&, const float&, const double&) { return task_from_result(); } });
+		hub.On("MsgPackAsVoid", function{ [](const bool&, const char&, const short&, const int&, const float&, const double&) {} });
+		hub.On("MsgPackTimeTask", function{ [](const chrono::system_clock::time_point&) { return task_from_result(); } });
 		hub.On("MsgPackTimeVoid", // .NET DateTime => MessagePack timestamp => C++ time_point
-			function{ [tce](const chrono::system_clock::time_point& tp)
+			function{ [](const chrono::system_clock::time_point& tp)
 			{
 				const auto received = chrono::system_clock::now();
 				auto t = chrono::system_clock::to_time_t(tp);
@@ -63,29 +62,34 @@ int main(int argc, const char** argv)
 				}
 			} }
 		);
-		hub.On("ClientMethod1",
-			function{ [&hub, tce](const string& a)
-			{
-				tce.set(a);
-			} }
-		);
-		hub.Start().then([expected = argv[3], &hub, tce]()
+		hub.Start().then([expected = argv[3], &hub]()
 		{
 			puts("Ready");
+			this_thread::sleep_for(17ms);
+			task_completion_event<string> tce{};
+			const auto off = hub.On("ClientMethod1",
+				function{ [&hub, tce](const string& a)
+				{
+					tce.set(a);
+				} }
+			);
 			return hub.Invoke<void>("HubMethod1", expected).then(
 				[tce]()
 				{
 					thread{ [tce]() {
-						this_thread::sleep_for(chrono::milliseconds(1000));
+						this_thread::sleep_for(1s);
 						tce.set_exception(make_exception_ptr(task_canceled{"Timeout"}));
 					} }.detach();
 					return create_task(tce);
 				}
 			).then(
-				[expected](const string& actual)
+				[expected, off](const string& actual)
 				{
+					off();
 					if (actual != expected)
 					{
+						fprintf(stderr, "Expected: %s\n", expected);
+						fprintf(stderr, "Actual: %s\n", actual.c_str());
 						throw invalid_argument{ "Unexpected value" };
 					}
 				}
@@ -101,12 +105,12 @@ int main(int argc, const char** argv)
 			{
 				return hub.Dispose();
 			}
-		).get(
-		);
+		).get()
+				;
 	}
 	catch (const exception& e)
 	{
-		fprintf(stderr, "%s\n", e.what());
+		fprintf(stderr, "Exception: %s\n", e.what());
 		return 1;
 	}
 	catch (...)

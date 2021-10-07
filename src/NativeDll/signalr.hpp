@@ -140,12 +140,21 @@ namespace FlyByWireless
 			SIGNALR_API concurrency::task<void> SendCore(const char* methodName, const msgpack::object& args, const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none());
 
 			template<typename...Args>
-			concurrency::task<void> Send(const char* methodName, const Args&...args, const concurrency::cancellation_token& cancellationToken = concurrency::cancellation_token::none())
+			concurrency::task<void> Send(const char* methodName, const Args&...args, const concurrency::cancellation_token& cancellationToken)
 			{
 				msgpack::object o{};
 				msgpack::zone z{};
-				msgpack::type::make_define_array(args...).msgpack_object(o, z);
+				msgpack::type::make_define_array(args...).msgpack_object(&o, z);
 				return SendCore(methodName, o, cancellationToken);
+			}
+
+			template<typename...Args>
+			concurrency::task<void> Send(const char* methodName, const Args&...args)
+			{
+				msgpack::object o{};
+				msgpack::zone z{};
+				msgpack::type::make_define_array(args...).msgpack_object(&o, z);
+				return SendCore(methodName, o, concurrency::cancellation_token::none());
 			}
 
 		private:
