@@ -7,13 +7,13 @@ using System.IO;
 using System.IO.Pipelines;
 using System.IO.Pipes;
 using System.Security.Claims;
-using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
+using PipeOptions = System.IO.Pipes.PipeOptions;
 
 namespace FlyByWireless.SignalRTunnel
 {
-    class NamedPipeServer<THub> : IHostedService where THub : Hub
+    sealed class NamedPipeServer<THub> : IHostedService where THub : Hub
     {
         CancellationTokenSource? _cts;
         Task? _loop;
@@ -35,7 +35,15 @@ namespace FlyByWireless.SignalRTunnel
             {
                 try
                 {
-                    ManualResetEventSlim mres = new ManualResetEventSlim();
+                    using SemaphoreSlim ss = new SemaphoreSlim(0, 1);
+                    using var r = cancellationToken.Register(() =>
+                    {
+                        try
+                        {
+                            ss.Release();
+                        }
+                        catch { }
+                    });
                     while (!cancellationToken.IsCancellationRequested)
                     {
                         NamedPipeServerStream server;
@@ -45,27 +53,25 @@ namespace FlyByWireless.SignalRTunnel
                         }
                         catch (IOException ex) when ((uint)ex.HResult == 0x800700E7) // ERROR_PIPE_BUSY
                         {
-                            mres.Wait(cancellationToken);
-                            mres.Reset();
+                            await ss.WaitAsync(cancellationToken);
                             continue;
                         }
                         if (!server.IsConnected)
                         {
                             await server.WaitForConnectionAsync(cancellationToken);
                         }
-                        _ = _handler.OnConnectedAsync(server).ContinueWith(async _ =>
+                        DuplexContext context = null!;
+                        _ = _handler.OnConnectedAsync(server, configure: c => context = c).ContinueWith(async _ =>
                         {
                             try
                             {
-                                var t = server.DisposeAsync();
-                                if (!t.IsCompleted)
-                                {
-                                    await t;
-                                }
+                                await using (server)
+                                await using (context)
+                                { }
                             }
                             finally
                             {
-                                mres.Set();
+                                ss.Release();
                             }
                         });
                     }
@@ -81,6 +87,33 @@ namespace FlyByWireless.SignalRTunnel
             return _loop ?? Task.CompletedTask;
         }
     }
+
+    static class IdGenerator
+    {
+        static readonly char[] _c = "0123456789ABCDEFGHIJKLMNOPQRSTUV".ToCharArray();
+
+        static long _seed = DateTime.UtcNow.Ticks;
+
+        public static string Generate(long seed) => string.Create(13, seed, (buffer, seed) =>
+        {
+            buffer[0] = _c[(seed >> 60) & 31];
+            buffer[1] = _c[(seed >> 55) & 31];
+            buffer[2] = _c[(seed >> 50) & 31];
+            buffer[3] = _c[(seed >> 45) & 31];
+            buffer[4] = _c[(seed >> 40) & 31];
+            buffer[5] = _c[(seed >> 35) & 31];
+            buffer[6] = _c[(seed >> 30) & 31];
+            buffer[7] = _c[(seed >> 25) & 31];
+            buffer[8] = _c[(seed >> 20) & 31];
+            buffer[9] = _c[(seed >> 15) & 31];
+            buffer[10] = _c[(seed >> 10) & 31];
+            buffer[11] = _c[(seed >> 5) & 31];
+            buffer[12] = _c[seed & 31];
+        });
+
+        public static string NextId() => Generate(Interlocked.Increment(ref _seed));
+
+    }
 }
 
 namespace Microsoft.Extensions.DependencyInjection
@@ -89,20 +122,13 @@ namespace Microsoft.Extensions.DependencyInjection
     {
         public static Task OnConnectedAsync<THub>(this HubConnectionHandler<THub> handler, IDuplexPipe transport, ClaimsPrincipal? user = null, Action<DuplexContext>? configure = null) where THub : Hub
         {
-            Span<byte> buffer = stackalloc byte[16];
-            RandomNumberGenerator.Fill(buffer);
             DuplexContext context = new DuplexContext(transport)
             {
-                ConnectionId = AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(buffer),
+                ConnectionId = IdGenerator.NextId(),
                 User = user
             };
             configure?.Invoke(context);
-            return handler.OnConnectedAsync(context).ContinueWith(task =>
-            {
-                var e = task.Exception?.InnerException;
-                transport.Output.Complete(e);
-                transport.Input.Complete(e);
-            });
+            return handler.OnConnectedAsync(context);
         }
 
         public static Task OnConnectedAsync<THub>(this HubConnectionHandler<THub> handler, Stream transport, ClaimsPrincipal? user = null, Action<DuplexContext>? configure = null) where THub : Hub
@@ -110,7 +136,7 @@ namespace Microsoft.Extensions.DependencyInjection
 
         public static ISignalRServerBuilder AddNamedPipe<THub>(this ISignalRServerBuilder builder, string pipeName, int maxNumberOfServerInstances = NamedPipeServerStream.MaxAllowedServerInstances) where THub : Hub
         => builder.AddNamedPipe<THub>((provider, _) =>
-            Task.FromResult(new NamedPipeServerStream(pipeName, PipeDirection.InOut, maxNumberOfServerInstances, PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous))
+            Task.FromResult(new NamedPipeServerStream(pipeName, PipeDirection.InOut, maxNumberOfServerInstances, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.WriteThrough))
         );
 
         public static ISignalRServerBuilder AddNamedPipe<THub>(this ISignalRServerBuilder builder, Func<IServiceProvider, CancellationToken, Task<NamedPipeServerStream>> factory) where THub : Hub

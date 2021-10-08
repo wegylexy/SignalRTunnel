@@ -46,6 +46,7 @@ await using var client = new HubConnectionBuilder()
     .Build();
 // TODO: register event handlers
 await client.StartAsync();
+await Task.Delay(1); // avoid race condition
 // TODO: invoke methods
 await client.StopAsync();
 ```
