@@ -35,9 +35,15 @@ namespace FlyByWireless.SignalRTunnel
             {
                 try
                 {
-                    using SemaphoreSlim ss = new SemaphoreSlim(1);
-                    ss.Wait();
-                    using var r = cancellationToken.Register(() => ss.Release());
+                    using SemaphoreSlim ss = new SemaphoreSlim(0, 1);
+                    using var r = cancellationToken.Register(() =>
+                    {
+                        try
+                        {
+                            ss.Release();
+                        }
+                        catch { }
+                    });
                     while (!cancellationToken.IsCancellationRequested)
                     {
                         NamedPipeServerStream server;

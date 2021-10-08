@@ -40,62 +40,102 @@ int main(int argc, const char** argv)
 		hub.On("MsgPackAsTask", function{ [](const bool&, const char&, const short&, const int&, const float&, const double&) { return task_from_result(); } });
 		hub.On("MsgPackAsVoid", function{ [](const bool&, const char&, const short&, const int&, const float&, const double&) {} });
 		hub.On("MsgPackTimeTask", function{ [](const chrono::system_clock::time_point&) { return task_from_result(); } });
-		hub.On("MsgPackTimeVoid", // .NET DateTime => MessagePack timestamp => C++ time_point
-			function{ [](const chrono::system_clock::time_point& tp)
+		task_completion_event<chrono::system_clock::time_point> tceTime{};
+		const auto offTime = hub.On("MsgPackTimeVoid", // .NET DateTime => MessagePack timestamp => C++ time_point
+			function{ [tceTime](const chrono::system_clock::time_point& a)
 			{
-				const auto received = chrono::system_clock::now();
-				auto t = chrono::system_clock::to_time_t(tp);
-				if (abs(chrono::duration_cast<chrono::seconds>(received - tp).count()) > 1)
-				{
-					tm m;
-					if (!gmtime_s(&m, &t))
-					{
-						ostringstream stream{};
-						stream << put_time(&m, "%FT%TZ");
-						fprintf(stderr, "Sent: %s\n", stream.str().c_str());
-						stream.clear();
-						t = chrono::system_clock::to_time_t(received);
-						gmtime_s(&m, &t);
-						stream << put_time(&m, "%FT%TZ");
-						fprintf(stderr, "Recevied: %s\n", stream.str().c_str());
-					}
-				}
+				tceTime.set(a);
 			} }
 		);
-		hub.Start().then([expected = argv[3], &hub]()
-		{
-			puts("Ready");
-			this_thread::sleep_for(17ms);
-			task_completion_event<string> tce{};
-			const auto off = hub.On("ClientMethod1",
-				function{ [&hub, tce](const string& a)
-				{
-					tce.set(a);
-				} }
-			);
-			return hub.Invoke<void>("HubMethod1", expected).then(
-				[tce]()
-				{
-					thread{ [tce]() {
-						this_thread::sleep_for(1s);
-						tce.set_exception(make_exception_ptr(task_canceled{"Timeout"}));
-					} }.detach();
-					return create_task(tce);
-				}
-			).then(
-				[expected, off](const string& actual)
-				{
-					off();
-					if (actual != expected)
+		const auto expected = argv[3];
+		hub.Start().then(
+			[]()
+			{
+				puts("Ready");
+				fflush(stdout);
+				return create_task(
+					[]()
 					{
-						fprintf(stderr, "Expected: %s\n", expected);
-						fprintf(stderr, "Actual: %s\n", actual.c_str());
-						throw invalid_argument{ "Unexpected value" };
+						this_thread::yield();
 					}
-				}
-			)
-					;
-		}).then(
+				);
+			}
+		).then(
+			[&hub, tceTime, offTime]()
+			{
+				fputs("Waiting for time...\n", stderr);
+				fflush(stderr);
+				return create_task(tceTime).then(
+					[offTime](const chrono::system_clock::time_point& a)
+					{
+						fputs("Time received.\n", stderr);
+						fflush(stderr);
+						offTime(); // TODO: test against further invocations
+						const auto expected = chrono::system_clock::now();
+						auto t = chrono::system_clock::to_time_t(a);
+						if (abs(chrono::duration_cast<chrono::seconds>(expected - a).count()) > 1)
+						{
+							tm m;
+							if (!gmtime_s(&m, &t))
+							{
+								ostringstream stream{};
+								stream << put_time(&m, "%FT%TZ");
+								fprintf(stderr, "Actual: %s\n", stream.str().c_str());
+								stream.clear();
+								t = chrono::system_clock::to_time_t(expected);
+								gmtime_s(&m, &t);
+								stream << put_time(&m, "%FT%TZ");
+								fprintf(stderr, "Expected: %s\n", stream.str().c_str());
+								fflush(stderr);
+							}
+							throw invalid_argument{ "Unexpected time." };
+						}
+					}
+				);
+			}
+		).then(
+			[expected, &hub]()
+			{
+				task_completion_event<string> tceString{};
+				const auto offString = hub.On("ClientMethod1",
+					function{ [&hub, tceString](const string& a)
+					{
+						tceString.set(a);
+					} }
+				);
+				fputs("Invoking...\n", stderr);
+				fflush(stderr);
+				return hub.Invoke<void>("HubMethod1", expected).then(
+					[tceString]()
+					{
+						fputs("Invoked.\n", stderr);
+						fflush(stderr);
+						thread{ [tceString]() {
+							this_thread::sleep_for(200ms);
+							tceString.set_exception(make_exception_ptr(task_canceled{"Timeout"}));
+						} }.detach();
+						fputs("Waiting for string...\n", stderr);
+						fflush(stderr);
+						return create_task(tceString);
+					}
+				).then(
+					[expected, offString](const string& actual)
+					{
+						fputs("String received.\n", stderr);
+						fflush(stderr);
+						offString(); // TODO: test against further invocations
+						if (actual != expected)
+						{
+							fprintf(stderr, "Expected: %s\n", expected);
+							fprintf(stderr, "Actual: %s\n", actual.c_str());
+							fflush(stderr);
+							throw invalid_argument{ "Unexpected value" };
+						}
+					}
+				)
+						;
+			}
+		).then(
 			[&hub]()
 			{
 				return hub.Stop();
@@ -111,13 +151,16 @@ int main(int argc, const char** argv)
 	catch (const exception& e)
 	{
 		fprintf(stderr, "Exception: %s\n", e.what());
+		fflush(stderr);
 		return 1;
 	}
 	catch (...)
 	{
 		fputs("Crashed\n", stderr);
+		fflush(stderr);
 		return 2;
 	}
 	puts("Completed");
+	fflush(stdout);
 	return 0;
 }

@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Nerdbank.Streams;
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -13,12 +14,46 @@ using System.Runtime.InteropServices;
 using System.Security.Claims;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 using Xunit.Abstractions;
 
 namespace FlyByWireless.SignalRTunnel.Test
 {
+    sealed class TestLogger : ILogger
+    {
+        readonly ITestOutputHelper _output;
+
+        public TestLogger(ITestOutputHelper output) => _output = output;
+
+        public IDisposable BeginScope<TState>(TState state) => null!;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            _output.WriteLine(logLevel.ToString() + ": " + formatter(state, exception));
+            if (exception != null)
+            {
+                _output.WriteLine(exception.ToString());
+            }
+        }
+    }
+
+    sealed class TestLoggerProvider : ILoggerProvider
+    {
+        readonly ITestOutputHelper _output;
+
+        readonly ConcurrentDictionary<string, TestLogger> _loggers = new();
+
+        public TestLoggerProvider(ITestOutputHelper output) => _output = output;
+
+        public ILogger CreateLogger(string categoryName) => _loggers.GetOrAdd(categoryName, new TestLogger(_output));
+
+        public void Dispose() => _loggers.Clear();
+    }
+
 #pragma warning disable VSTHRD200 // Use "Async" suffix for async methods
     public interface ITestClient
     {
@@ -75,6 +110,10 @@ namespace FlyByWireless.SignalRTunnel.Test
 
     public class ManagedTest
     {
+        readonly ITestOutputHelper _output;
+
+        public ManagedTest(ITestOutputHelper output) => _output = output;
+
         public enum DisconnectType
         {
             ClientStop,
@@ -94,7 +133,10 @@ namespace FlyByWireless.SignalRTunnel.Test
         {
             using var app = Host.CreateDefaultBuilder().ConfigureServices(services =>
                 services.AddSignalR().AddMessagePackProtocol()
-            ).Build();
+            ).ConfigureLogging(builder =>
+            {
+                builder.ClearProviders().AddProvider(new TestLoggerProvider(_output));
+            }).Build();
             await app.StartAsync();
             var (serverStream, clientStream) = FullDuplexStream.CreatePair();
             await using (serverStream)
@@ -192,7 +234,10 @@ namespace FlyByWireless.SignalRTunnel.Test
             var pipeName = Guid.NewGuid().ToString("N");
             using var app = Host.CreateDefaultBuilder().ConfigureServices(services =>
                 services.AddSignalR().AddMessagePackProtocol().AddNamedPipe<TestHub>(pipeName, maxNumberOfServerInstances)
-            ).Build();
+            ).ConfigureLogging(builder =>
+            {
+                builder.ClearProviders().AddProvider(new TestLoggerProvider(_output));
+            }).Build();
             await app.StartAsync();
             async Task<HubConnection> NewClientAsync()
             {
@@ -271,8 +316,10 @@ namespace FlyByWireless.SignalRTunnel.Test
             Assert.True(tcs.Task.IsCompletedSuccessfully);
         }
 
-        [Fact]
-        public async Task NativeAsync()
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task NativeAsync(bool delay)
         {
             var path = Path.Join(Environment.CurrentDirectory
                 .Replace("net6.0", new Regex(@"\d+(?=-)").Replace(RuntimeInformation.RuntimeIdentifier, string.Empty))
@@ -286,7 +333,10 @@ namespace FlyByWireless.SignalRTunnel.Test
             var pipeName = Guid.NewGuid().ToString("N");
             using var app = Host.CreateDefaultBuilder().ConfigureServices(services =>
                 services.AddSignalR().AddMessagePackProtocol().AddNamedPipe<TestHub>(pipeName, 1)
-            ).Build();
+            ).ConfigureLogging(builder =>
+            {
+                builder.ClearProviders().AddProvider(new TestLoggerProvider(_output));
+            }).Build();
             await app.StartAsync();
             var context = app.Services.GetRequiredService<IHubContext<TestHub, ITestClient>>();
             using Process client = new()
@@ -305,19 +355,39 @@ namespace FlyByWireless.SignalRTunnel.Test
             client.StartInfo.ArgumentList.Add(".");
             var expected = Guid.NewGuid().ToString();
             client.StartInfo.ArgumentList.Add(expected);
-            client.ErrorDataReceived += (_, e) => _output.WriteLine(e.Data);
+            client.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data is { Length: > 0 } and var d)
+                {
+                    _output.WriteLine("err: " + d);
+                }
+            };
+            using SemaphoreSlim ss = new(0, 1);
+            client.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data is { Length: > 0 } and var d)
+                {
+                    _output.WriteLine("out: " + d);
+                }
+                ss.Release();
+            };
             Assert.True(client.Start());
             client.BeginErrorReadLine();
+            client.BeginOutputReadLine();
             try
             {
-                Assert.Equal("Ready", await client.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(1)));
+                await ss.WaitAsync(TimeSpan.FromSeconds(1));
+                if (delay)
+                {
+                    await Task.Delay(200);
+                }
                 await context.Clients.All.MsgPackTimeVoid(DateTime.UtcNow).WaitAsync(TimeSpan.FromSeconds(1));
-                Assert.Equal("Completed", await client.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+                await ss.WaitAsync(TimeSpan.FromSeconds(1));
                 await client.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(1));
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex);
+                _output.WriteLine(ex.ToString());
             }
             finally
             {
