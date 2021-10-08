@@ -34,7 +34,8 @@
 		
 	<ItemGroup>
 		<None Include="../../LICENSE" Pack="true" PackagePath="" />
-		<PackageReference Include="FlyByWireless.SignalRTunnel.Client" Version="1.3.*" />
+		<PackageReference Condition="'$(Configuration)'=='Release'" Include="FlyByWireless.SignalRTunnel.Client" Version="$(VersionPrefix)" />
+		<ProjectReference Condition="'$(Configuration)'!='Release'" Include="..\Client\Client.csproj" />
 		<PackageReference Include="MessagePack" Version="2.3.85" />
 		<PackageReference Include="MessagePack.MSBuild.Tasks" Version="2.3.85">
 		  <PrivateAssets>all</PrivateAssets>

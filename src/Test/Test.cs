@@ -9,6 +9,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Claims;
@@ -124,12 +125,17 @@ public class ManagedTest
     }
 
     [Theory]
-    [InlineData(DisconnectType.ClientStop)]
-    [InlineData(DisconnectType.ClientAbort)]
-    [InlineData(DisconnectType.ServerAbort)]
-    [InlineData(DisconnectType.InvokeAbort)]
-    [InlineData(DisconnectType.BothAbort)]
-    public async Task TunnelAsync(DisconnectType disconnectType)
+    [InlineData(DisconnectType.ClientStop, false)]
+    [InlineData(DisconnectType.ClientAbort, false)]
+    [InlineData(DisconnectType.ServerAbort, false)]
+    [InlineData(DisconnectType.InvokeAbort, false)]
+    [InlineData(DisconnectType.BothAbort, false)]
+    [InlineData(DisconnectType.ClientStop, true)]
+    [InlineData(DisconnectType.ClientAbort, true)]
+    [InlineData(DisconnectType.ServerAbort, true)]
+    [InlineData(DisconnectType.InvokeAbort, true)]
+    [InlineData(DisconnectType.BothAbort, true)]
+    public async Task TunnelAsync(DisconnectType disconnectType, bool namedPipe)
     {
         using var app = Host.CreateDefaultBuilder().ConfigureServices(services =>
             services.AddSignalR().AddMessagePackProtocol()
@@ -138,7 +144,23 @@ public class ManagedTest
             builder.ClearProviders().AddProvider(new TestLoggerProvider(_output));
         }).Build();
         await app.StartAsync();
-        var (serverStream, clientStream) = FullDuplexStream.CreatePair();
+        Stream serverStream, clientStream;
+        if (namedPipe)
+        {
+            var pipeName = Guid.NewGuid().ToString("N");
+            NamedPipeServerStream s = new(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.WriteThrough);
+            NamedPipeClientStream c = new(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.WriteThrough);
+            await Task.WhenAll(
+                s.WaitForConnectionAsync(),
+                c.ConnectAsync()
+            );
+            serverStream = s;
+            clientStream = c;
+        }
+        else
+        {
+            (serverStream, clientStream) = FullDuplexStream.CreatePair();
+        }
         await using (serverStream)
         {
             var disconnection = Task.Run(async () =>
@@ -161,6 +183,10 @@ public class ManagedTest
                 var client = new HubConnectionBuilder()
                     .AddMessagePackProtocol()
                     .WithTunnel(clientStream)
+                    .ConfigureLogging(builder =>
+                    {
+                        builder.ClearProviders().AddProvider(new TestLoggerProvider(_output));
+                    })
                     .Build();
                 client.HandshakeTimeout = client.ServerTimeout = TimeSpan.FromSeconds(1);
                 await client.StartAsync();
@@ -171,7 +197,7 @@ public class ManagedTest
                     {
                         using var on = client.On(nameof(ITestClient.ClientMethod1), (string a) => tcs.SetResult(a));
                         await client.InvokeAsync(nameof(TestHub.HubMethod1), expected).WaitAsync(TimeSpan.FromSeconds(1));
-                        Assert.Equal(expected, await tcs.Task);
+                        Assert.Equal(expected, await tcs.Task.WaitAsync(TimeSpan.FromSeconds(1)));
                     }
                 }
                 {
@@ -181,7 +207,7 @@ public class ManagedTest
                     {
                         using var on = client.On(nameof(ITestClient.ClientMethod1), (string a) => tcs.SetResult(a));
                         await hubContext.Clients.All.ClientMethod1(expected).WaitAsync(TimeSpan.FromSeconds(1));
-                        Assert.Equal(expected, await tcs.Task);
+                        Assert.Equal(expected, await tcs.Task.WaitAsync(TimeSpan.FromSeconds(1)));
                     }
                 }
                 await Assert.ThrowsAsync<HubException>(() => client.InvokeAsync(nameof(TestHub.AOnly))).WaitAsync(TimeSpan.FromSeconds(1));
@@ -241,7 +267,14 @@ public class ManagedTest
         await app.StartAsync();
         async Task<HubConnection> NewClientAsync()
         {
-            var client = new HubConnectionBuilder().AddMessagePackProtocol().WithNamedPipe(pipeName).Build();
+            var client = new HubConnectionBuilder()
+                .AddMessagePackProtocol()
+                .WithNamedPipe(pipeName)
+                .ConfigureLogging(builder =>
+                {
+                    builder.ClearProviders().AddProvider(new TestLoggerProvider(_output));
+                })
+                .Build();
             client.HandshakeTimeout = client.ServerTimeout = TimeSpan.FromSeconds(5);
             await client.StartAsync().WaitAsync(TimeSpan.FromSeconds(1));
             if (delay)
@@ -382,6 +415,7 @@ public class NativeTest
                 await Task.Delay(200);
             }
             await context.Clients.All.MsgPackTimeVoid(DateTime.UtcNow).WaitAsync(TimeSpan.FromSeconds(1));
+            await Task.Delay(1000).WaitAsync(TimeSpan.FromSeconds(1));
             await ss.WaitAsync(TimeSpan.FromSeconds(1));
             await client.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(1));
         }
