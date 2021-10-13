@@ -33,6 +33,7 @@ await using var client = new HubConnectionBuilder()
     .Build();
 // TODO: register event handlers
 await client.StartAsync();
+await Task.Delay(1); // see https://github.com/dotnet/aspnetcore/issues/37340
 // TODO: invoke methods
 await client.StopAsync();
 ```
@@ -46,7 +47,7 @@ await using var client = new HubConnectionBuilder()
     .Build();
 // TODO: register event handlers
 await client.StartAsync();
-await Task.Delay(1); // avoid race condition
+await Task.Delay(1); // see https://github.com/dotnet/aspnetcore/issues/37340
 // TODO: invoke methods
 await client.StopAsync();
 ```

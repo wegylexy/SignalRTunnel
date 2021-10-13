@@ -71,8 +71,12 @@ sealed class TestHub : Hub<ITestClient>
             "Connected: {ConnectionId}"
         ),
         _logDisconnected = LoggerMessage.Define<string>(LogLevel.Information,
-            new(1, nameof(OnDisconnectedAsync)),
+            new(2, nameof(OnDisconnectedAsync)),
             "Disconnected: {ConnectionId}"
+        ),
+        _logInvoked = LoggerMessage.Define<string>(LogLevel.Information,
+            new(3, nameof(HubMethod1)),
+            "a: {a}"
         );
 
     readonly ILogger<TestHub> _logger;
@@ -91,7 +95,11 @@ sealed class TestHub : Hub<ITestClient>
         return Task.CompletedTask;
     }
 
-    public Task HubMethod1(string a) => Clients.Caller.ClientMethod1(a);
+    public Task HubMethod1(string a)
+    {
+        _logInvoked(_logger, a, null);
+        return Clients.Caller.ClientMethod1(a);
+    }
 
 #pragma warning disable CA1822 // Mark members as static
     [Authorize(Roles = "A")]
@@ -169,7 +177,7 @@ public class ManagedTest
                 DuplexContext? connectionContext = null;
                 var connection = handler.OnConnectedAsync(serverStream, user: new(new ClaimsIdentity(new Claim[]
                 {
-                        new(ClaimTypes.Role, "C")
+                    new(ClaimTypes.Role, "C")
                 }, "Mock")), configure: c => connectionContext = c);
                 Assert.NotNull(connectionContext?.ConnectionId);
                 await using (serverStream)
@@ -191,6 +199,10 @@ public class ManagedTest
                 client.HandshakeTimeout = client.ServerTimeout = TimeSpan.FromSeconds(1);
                 await client.StartAsync();
                 Assert.Equal(HubConnectionState.Connected, client.State);
+                if (namedPipe)
+                {
+                    await Task.Delay(1); // TODO: remove when https://github.com/dotnet/aspnetcore/issues/37340 is fixed
+                }
                 {
                     var expected = Guid.NewGuid().ToString();
                     TaskCompletionSource<string> tcs = new();
@@ -239,6 +251,10 @@ public class ManagedTest
                         }
                         break;
                 }
+                if (client.State != HubConnectionState.Disconnected)
+                {
+                    await Task.Delay(client.ServerTimeout);
+                }
                 Assert.Equal(HubConnectionState.Disconnected, client.State);
             }
             await disconnection.WaitAsync(TimeSpan.FromSeconds(1));
@@ -247,15 +263,11 @@ public class ManagedTest
     }
 
     [Theory]
-    [InlineData(1, false, false)]
-    [InlineData(2, false, false)]
-    [InlineData(1, false, true)]
-    [InlineData(2, false, true)]
-    [InlineData(1, true, false)]
-    [InlineData(2, true, false)]
-    [InlineData(1, true, true)]
-    [InlineData(2, true, true)]
-    public async Task NamedPipeAsync(int maxNumberOfServerInstances, bool delay, bool invokeOnStart)
+    [InlineData(1, false)]
+    [InlineData(2, false)]
+    [InlineData(1, true)]
+    [InlineData(2, true)]
+    public async Task NamedPipeAsync(int maxNumberOfServerInstances, bool invokeOnStart)
     {
         var pipeName = Guid.NewGuid().ToString("N");
         using var app = Host.CreateDefaultBuilder().ConfigureServices(services =>
@@ -277,10 +289,7 @@ public class ManagedTest
                 .Build();
             client.HandshakeTimeout = client.ServerTimeout = TimeSpan.FromSeconds(5);
             await client.StartAsync().WaitAsync(TimeSpan.FromSeconds(1));
-            if (delay)
-            {
-                await Task.Delay(1);
-            }
+            await Task.Delay(1); // TODO: remove when https://github.com/dotnet/aspnetcore/issues/37340 is fixed
             if (invokeOnStart)
             {
                 var expected = Guid.NewGuid().ToString();
@@ -349,10 +358,8 @@ public class NativeTest
         Assert.True(tcs.Task.IsCompletedSuccessfully);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task NativeAsync(bool delay)
+    [Fact]
+    public async Task NativeAsync()
     {
         var path = Path.Join(Environment.CurrentDirectory
             .Replace("net6.0", new Regex(@"\d+(?=-)").Replace(RuntimeInformation.RuntimeIdentifier, string.Empty))
@@ -402,7 +409,7 @@ public class NativeTest
             {
                 _output.WriteLine("out: " + d);
             }
-            ss.Release();
+            try { ss.Release(); } catch { }
         };
         Assert.True(client.Start());
         client.BeginErrorReadLine();
@@ -410,13 +417,8 @@ public class NativeTest
         try
         {
             await ss.WaitAsync(TimeSpan.FromSeconds(1));
-            if (delay)
-            {
-                await Task.Delay(200);
-            }
             await context.Clients.All.MsgPackTimeVoid(DateTime.UtcNow).WaitAsync(TimeSpan.FromSeconds(1));
-            await Task.Delay(1000).WaitAsync(TimeSpan.FromSeconds(1));
-            await ss.WaitAsync(TimeSpan.FromSeconds(1));
+            await ss.WaitAsync(TimeSpan.FromSeconds(2));
             await client.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(1));
         }
         catch (Exception ex)

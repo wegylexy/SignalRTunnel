@@ -119,7 +119,6 @@ sealed class NativeMessagePackHubProtocol : IHubProtocol
                             break;
                         default:
                             message = null;
-                            Console.Error.WriteLine("Unknown");
                             break;
                     }
                     return message != null;

@@ -118,12 +118,19 @@ sealed class Connection : IAsyncDisposable
         return Marshal.GetFunctionPointerForDelegate(r);
     }
 
+    // TODO: remove when https://github.com/dotnet/aspnetcore/issues/37340 is fixed
+    static async Task _Start(nint handle, CancellationToken token)
+    {
+        await FromHandle(handle)._connection.StartAsync(token);
+        await Task.Delay(1, token);
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "signalr_start")]
     internal static unsafe nint Start(nint handle, delegate* unmanaged<nint, nint, void> callback, nint context)
     {
         CancellationTokenSource cts = new();
         var p = CancelFunctionPointer(cts);
-        Callback(FromHandle(handle)._connection.StartAsync(cts.Token), callback, context);
+        Callback(_Start(handle, cts.Token), callback, context);
         return p;
     }
 

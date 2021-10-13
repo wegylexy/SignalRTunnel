@@ -44,7 +44,11 @@ int main(int argc, const char** argv)
 		const auto offTime = hub.On("MsgPackTimeVoid", // .NET DateTime => MessagePack timestamp => C++ time_point
 			function{ [tceTime](const chrono::system_clock::time_point& a)
 			{
+				fputs("Setting time.\n", stderr);
+				fflush(stderr);
 				tceTime.set(a);
+				fputs("Set time.\n", stderr);
+				fflush(stderr);
 			} }
 		);
 		const auto expected = argv[3];
@@ -53,12 +57,6 @@ int main(int argc, const char** argv)
 			{
 				puts("Ready");
 				fflush(stdout);
-				return create_task(
-					[]()
-					{
-						this_thread::yield();
-					}
-				);
 			}
 		).then(
 			[&hub, tceTime, offTime]()
@@ -100,12 +98,16 @@ int main(int argc, const char** argv)
 				const auto offString = hub.On("ClientMethod1",
 					function{ [&hub, tceString](const string& a)
 					{
+						fputs("Setting string.\n", stderr);
+						fflush(stderr);
 						tceString.set(a);
+						fputs("Set string.\n", stderr);
+						fflush(stderr);
 					} }
 				);
 				fputs("Invoking...\n", stderr);
 				fflush(stderr);
-				return hub.Invoke<void>("HubMethod1", expected).then(
+				return hub.Send("HubMethod1", expected).then(
 					[tceString]()
 					{
 						fputs("Invoked.\n", stderr);
