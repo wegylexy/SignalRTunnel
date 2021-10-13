@@ -9,7 +9,6 @@ using System.IO.Pipes;
 using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
-using PipeOptions = System.IO.Pipes.PipeOptions;
 
 namespace FlyByWireless.SignalRTunnel
 {
@@ -136,7 +135,7 @@ namespace Microsoft.Extensions.DependencyInjection
 
         public static ISignalRServerBuilder AddNamedPipe<THub>(this ISignalRServerBuilder builder, string pipeName, int maxNumberOfServerInstances = NamedPipeServerStream.MaxAllowedServerInstances) where THub : Hub
         => builder.AddNamedPipe<THub>((provider, _) =>
-            Task.FromResult(new NamedPipeServerStream(pipeName, PipeDirection.InOut, maxNumberOfServerInstances, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.WriteThrough))
+            Task.FromResult(new NamedPipeServerStream(pipeName, PipeDirection.InOut, maxNumberOfServerInstances, PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous))
         );
 
         public static ISignalRServerBuilder AddNamedPipe<THub>(this ISignalRServerBuilder builder, Func<IServiceProvider, CancellationToken, Task<NamedPipeServerStream>> factory) where THub : Hub

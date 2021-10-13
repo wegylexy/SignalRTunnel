@@ -8,7 +8,6 @@ using System.IO.Pipes;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
-using PipeOptions = System.IO.Pipes.PipeOptions;
 
 namespace FlyByWireless.SignalRTunnel
 {
@@ -70,6 +69,6 @@ namespace Microsoft.Extensions.DependencyInjection
         }
 
         public static IHubConnectionBuilder WithNamedPipe(this IHubConnectionBuilder builder, string pipeName, string serverName = ".")
-        => builder.WithNamedPipe((provider, _) => new NamedPipeClientStream(serverName, pipeName, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.WriteThrough));
+        => builder.WithNamedPipe((provider, _) => new NamedPipeClientStream(serverName, pipeName, PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous));
     }
 }
