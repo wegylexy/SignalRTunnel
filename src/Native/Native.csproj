@@ -14,6 +14,7 @@
 		<PackageTags>aspnetcore signalr transport injection extensions</PackageTags>
 		<Copyright>(C) 2021 WONG Tin Chi Timothy. All rights reserved.</Copyright>
 		<VersionPrefix>1.3.2</VersionPrefix>
+		<VersionSuffix>alpha</VersionSuffix>
 		<IsPackable Condition="'$(Configuration)'=='Release'">true</IsPackable>
 		<RepositoryType>git</RepositoryType>
 		<RepositoryUrl>https://github.com/wegylexy/SignalRTunnel</RepositoryUrl>

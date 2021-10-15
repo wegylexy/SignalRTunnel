@@ -2,19 +2,29 @@
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Protocol;
+using Microsoft.Extensions.Options;
 using Microsoft.IO;
 using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 
 namespace FlyByWireless.SignalRTunnel;
 
+public delegate void SerializeDelegate(ref MessagePackWriter writer, MessagePackSerializerOptions options);
+
 sealed class NativeMessagePackHubProtocol : IHubProtocol
 {
     static readonly RecyclableMemoryStreamManager _rmsm = new();
 
+    readonly MessagePackSerializerOptions _options;
+
     public string Name => "messagepack";
     public int Version => 1;
     public TransferFormat TransferFormat => TransferFormat.Binary;
+
+    public NativeMessagePackHubProtocol() : this(Options.Create(new MessagePackHubProtocolOptions())) { }
+
+    public NativeMessagePackHubProtocol(IOptions<MessagePackHubProtocolOptions> options)
+    => _options = options.Value.SerializerOptions;
 
     public ReadOnlyMemory<byte> GetMessageBytes(HubMessage message)
     => throw new NotSupportedException($"{nameof(GetMessageBytes)} not supported on client.");
@@ -59,7 +69,7 @@ sealed class NativeMessagePackHubProtocol : IHubProtocol
                         }
                         return headers;
                     }
-                    string? I(ref MessagePackReader reader)
+                    static string? I(ref MessagePackReader reader)
                     {
                         var i = reader.ReadString();
                         return string.IsNullOrEmpty(i) ? null : i;
@@ -73,7 +83,11 @@ sealed class NativeMessagePackHubProtocol : IHubProtocol
                                 (
                                     I(ref reader),
                                     reader.ReadString(),
-                                    new[] { input.Slice(read + reader.Consumed).ToArray() }
+                                    new object[]
+                                    {
+                                        input.Slice(read + reader.Consumed).ToArray(),
+                                        _options
+                                    }
                                 )
                                 {
                                     Headers = headers
@@ -186,7 +200,7 @@ sealed class NativeMessagePackHubProtocol : IHubProtocol
                     writer.Write(invocation.InvocationId);
                 }
                 writer.Write(invocation.Target);
-                writer.WriteRaw((byte[])invocation.Arguments[0]!);
+                ((SerializeDelegate)invocation.Arguments[0]!)(ref writer, _options);
                 S(invocation.StreamIds, ref writer);
                 break;
             case StreamInvocationMessage:

@@ -51,3 +51,22 @@ await Task.Delay(1); // see https://github.com/dotnet/aspnetcore/issues/37340
 // TODO: invoke methods
 await client.StopAsync();
 ```
+
+## NativeAOT Usage
+`FlyByWireless.SignalRTunnel.Client.Native`
+
+See https://github.com/dotnet/runtimelab/blob/feature/NativeAOT/docs/using-nativeaot/compiling.md
+
+```cs
+await using var client = new HubConnectionBuilder()
+    .AddNativeMessagePackProtocol()
+    // ...
+    .Build();
+using var on = client.OnNative("myClientEvent", (MyArg1 arg1, MyArg2 arg2) => {
+
+});
+// ...
+var result = await client.InvokeNativeAsync<MyResult>("myHubMethod", arg1, arg2);
+await client.SendNativeAsync("myHubMethod", arg1, arg2);
+// ...
+```

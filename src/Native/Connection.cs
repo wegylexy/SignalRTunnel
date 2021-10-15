@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Http.Connections;
+﻿using MessagePack;
+using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.AspNetCore.SignalR.Protocol;
 using Microsoft.Extensions.DependencyInjection;
@@ -149,7 +150,12 @@ sealed class Connection : IAsyncDisposable
         CancellationTokenSource cts = new();
         var p = CancelFunctionPointer(cts);
         FromHandle(handle)._connection
-            .InvokeCoreAsync(Marshal.PtrToStringUTF8(methodName)!, typeof(object), new[] { new ReadOnlySpan<byte>(buffer, bufferSize).ToArray() }, cts.Token)
+            .InvokeNativeCoreAsync(
+                Marshal.PtrToStringUTF8(methodName)!,
+                (ref MessagePackWriter writer, MessagePackSerializerOptions options) =>
+                    writer.WriteRaw(new ReadOnlySpan<byte>(buffer, bufferSize)),
+                cts.Token
+            )
             .ContinueWith(t =>
             {
                 if (t.IsCompletedSuccessfully)
@@ -181,9 +187,10 @@ sealed class Connection : IAsyncDisposable
     {
         CancellationTokenSource cts = new();
         var p = CancelFunctionPointer(cts);
-        Callback(FromHandle(handle)._connection.SendCoreAsync(
+        Callback(FromHandle(handle)._connection.SendNativeCoreAsync(
             Marshal.PtrToStringUTF8(methodName)!,
-            new[] { new ReadOnlySpan<byte>(buffer, bufferSize).ToArray() },
+            (ref MessagePackWriter writer, MessagePackSerializerOptions options) =>
+                writer.WriteRaw(new ReadOnlySpan<byte>(buffer, bufferSize)),
             cts.Token
         ), callback, context);
         return p;
@@ -197,7 +204,7 @@ sealed class Connection : IAsyncDisposable
 
     unsafe Connection(IHubConnectionBuilder builder, in EventHandlers handlers, nint context)
     {
-        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IHubProtocol, NativeMessagePackHubProtocol>());
+        builder.AddNativeMessagePackProtocol();
         _connection = builder.Build();
         _handle = GCHandle.Alloc(this);
         _handlers = handlers;
